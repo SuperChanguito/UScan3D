@@ -1,0 +1,38 @@
+name: iScan3D
+options:
+  bundleIdPrefix: com.mrgrisafe
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+targets:
+  iScan3D:
+    type: application
+    platform: iOS
+    sources:
+      - path: iScan3D
+    info:
+      path: iScan3D/Info.plist
+      properties:
+        CFBundleDisplayName: iScan3D
+        NSCameraUsageDescription: iScan3D uses the camera to scan real objects into 3D models for printing.
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "5.9"
+
+schemes:
+  iScan3D:
+    build:
+      targets:
+        iScan3D: all
+    run:
+      config: Debug
+    archive:
+      config: Release
