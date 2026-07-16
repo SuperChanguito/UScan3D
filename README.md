@@ -1,4 +1,4 @@
-# iScan3D
+# U-Scan3D
 
 Scan real objects with your iPhone and export print-ready STL files for your
 Bambu Lab X1 Carbon (or any 3D printer).
@@ -26,8 +26,8 @@ computer, or open in the Bambu Handy app.
 
 1. Push this repo to **GitHub as a public repo**. Every push to `main` runs the
    *Build unsigned IPA* workflow on a free macOS runner.
-2. Download the `iScan3D-unsigned` artifact from the run's **Actions** page —
-   it contains `iScan3D.ipa`.
+2. Download the `UScan3D-unsigned` artifact from the run's **Actions** page —
+   it contains `UScan3D.ipa`.
 3. Install [AltStore](https://altstore.io) on your Windows PC (requires iTunes
    and iCloud from Apple's site, not the Microsoft Store versions).
 4. Sideload the IPA to your iPhone with AltStore using a free Apple ID.

@@ -20,8 +20,8 @@ jobs:
       - name: Build (unsigned)
         run: |
           xcodebuild \
-            -project iScan3D.xcodeproj \
-            -scheme iScan3D \
+            -project UScan3D.xcodeproj \
+            -scheme UScan3D \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
@@ -32,11 +32,11 @@ jobs:
       - name: Package IPA
         run: |
           mkdir Payload
-          cp -R build/Build/Products/Release-iphoneos/iScan3D.app Payload/
-          zip -r iScan3D.ipa Payload
+          cp -R build/Build/Products/Release-iphoneos/UScan3D.app Payload/
+          zip -r UScan3D.ipa Payload
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: iScan3D-unsigned
-          path: iScan3D.ipa
+          name: UScan3D-unsigned
+          path: UScan3D.ipa

@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct IScan3DApp: App {
+struct UScan3DApp: App {
     var body: some Scene {
         WindowGroup {
             HomeView()

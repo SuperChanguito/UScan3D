@@ -123,7 +123,7 @@ struct ModelPreviewView: View {
         let trianglesToExport = triangles
         let sizeMM = Float(targetLongestMM)
         let outputURL = modelURL.deletingLastPathComponent()
-            .appendingPathComponent("iScan3D-\(Int(targetLongestMM))mm.stl")
+            .appendingPathComponent("U-Scan3D-\(Int(targetLongestMM))mm.stl")
 
         Task.detached(priority: .userInitiated) {
             do {

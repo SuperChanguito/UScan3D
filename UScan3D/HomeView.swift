@@ -14,7 +14,7 @@ struct HomeView: View {
                     } description: {
                         Text(ObjectCaptureSession.isSupported
                             ? "Tap + to scan your first object."
-                            : "This device doesn't support Object Capture. iScan3D needs an iPhone Pro with LiDAR.")
+                            : "This device doesn't support Object Capture. UScan3D needs an iPhone Pro with LiDAR.")
                     }
                 } else {
                     List {
@@ -34,7 +34,7 @@ struct HomeView: View {
                     }
                 }
             }
-            .navigationTitle("iScan3D")
+            .navigationTitle("U-Scan3D")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {

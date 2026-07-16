@@ -88,7 +88,7 @@ enum STLExporter {
         var data = Data()
         data.reserveCapacity(84 + triangles.count * 50)
 
-        var header = Data("iScan3D binary STL".utf8)
+        var header = Data("U-Scan3D binary STL".utf8)
         header.append(Data(count: 80 - header.count))
         data.append(header)
         appendUInt32(UInt32(triangles.count), to: &data)

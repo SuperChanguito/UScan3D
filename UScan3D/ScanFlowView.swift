@@ -44,7 +44,7 @@ struct ScanFlowView: View {
                 .progressViewStyle(.linear)
                 .padding(.horizontal, 40)
 
-                Text("Keep iScan3D open — this can take a few minutes.")
+                Text("Keep U-Scan3D open — this can take a few minutes.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 

@@ -1,4 +1,4 @@
-name: iScan3D
+name: UScan3D
 options:
   bundleIdPrefix: com.mrgrisafe
   deploymentTarget:
@@ -6,16 +6,16 @@ options:
   createIntermediateGroups: true
 
 targets:
-  iScan3D:
+  UScan3D:
     type: application
     platform: iOS
     sources:
-      - path: iScan3D
+      - path: UScan3D
     info:
-      path: iScan3D/Info.plist
+      path: UScan3D/Info.plist
       properties:
-        CFBundleDisplayName: iScan3D
-        NSCameraUsageDescription: iScan3D uses the camera to scan real objects into 3D models for printing.
+        CFBundleDisplayName: U-Scan3D
+        NSCameraUsageDescription: U-Scan3D uses the camera to scan real objects into 3D models for printing.
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -28,10 +28,10 @@ targets:
         SWIFT_VERSION: "5.9"
 
 schemes:
-  iScan3D:
+  UScan3D:
     build:
       targets:
-        iScan3D: all
+        UScan3D: all
     run:
       config: Debug
     archive:
