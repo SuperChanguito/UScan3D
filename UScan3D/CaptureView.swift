@@ -4,7 +4,7 @@ import SwiftUI
 /// The live guided-capture screen: RealityKit's ObjectCaptureView renders the
 /// camera feed, point cloud, and reticle; we overlay the stage controls.
 struct CaptureView: View {
-    let session: ObjectCaptureSession
+    @ObservedObject var session: ObjectCaptureSession
     let onCancel: () -> Void
 
     var body: some View {
@@ -48,9 +48,23 @@ struct CaptureView: View {
                 }
             }
         case .capturing:
-            VStack(spacing: 12) {
-                instruction("Orbit the object slowly — \(session.numberOfShotsTaken) photos so far.")
-                actionButton("Finish Scan") { session.finish() }
+            if session.userCompletedScanPass {
+                VStack(spacing: 12) {
+                    instruction("Orbit complete. Flip the object to capture its underside, keep scanning this side, or finish.")
+                    if !session.feedback.contains(.objectNotFlippable) {
+                        actionButton("Flip Object & Continue") { session.beginNewScanPassAfterFlip() }
+                    }
+                    HStack(spacing: 12) {
+                        Button("Scan More") { session.beginNewScanPass() }
+                            .buttonStyle(.bordered)
+                        actionButton("Finish Scan") { session.finish() }
+                    }
+                }
+            } else {
+                VStack(spacing: 12) {
+                    instruction("Orbit the object slowly — \(session.numberOfShotsTaken) photos so far.")
+                    actionButton("Finish Scan") { session.finish() }
+                }
             }
         case .finishing:
             ProgressView("Finishing…")
