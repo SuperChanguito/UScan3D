@@ -4,7 +4,7 @@ import SwiftUI
 /// The live guided-capture screen: RealityKit's ObjectCaptureView renders the
 /// camera feed, point cloud, and reticle; we overlay the stage controls.
 struct CaptureView: View {
-    @ObservedObject var session: ObjectCaptureSession
+    let session: ObjectCaptureSession
     let onCancel: () -> Void
 
     var body: some View {
