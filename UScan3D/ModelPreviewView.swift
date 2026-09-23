@@ -11,6 +11,7 @@ struct ModelPreviewView: View {
     @State private var scene: SCNScene?
     @State private var triangles: [Triangle] = []
     @State private var nativeSize: SIMD3<Float>?
+    @State private var holesFilled = 0
     @State private var targetLongestMM: Double = 100
     @State private var exportedSTL: URL?
     @State private var isExporting = false
@@ -58,6 +59,14 @@ struct ModelPreviewView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if holesFilled > 0 {
+                Label(
+                    "Repaired \(holesFilled) hole\(holesFilled == 1 ? "" : "s") for a watertight print",
+                    systemImage: "wrench.and.screwdriver")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             HStack {
                 Text("Print size")
                 Slider(value: $targetLongestMM, in: 10...256, step: 1) { _ in
@@ -102,12 +111,14 @@ struct ModelPreviewView: View {
         let url = modelURL
         scene = try? SCNScene(url: url, options: nil)
         do {
-            let loaded = try await Task.detached(priority: .userInitiated) {
-                try STLExporter.loadTriangles(from: url)
+            let repaired = try await Task.detached(priority: .userInitiated) {
+                let loaded = try STLExporter.loadTriangles(from: url)
+                return MeshRepair.repair(loaded)
             }.value
-            triangles = loaded
+            triangles = repaired.triangles
+            holesFilled = repaired.holesFilled
 
-            let size = STLExporter.sizeMM(of: loaded)
+            let size = STLExporter.sizeMM(of: repaired.triangles)
             nativeSize = size
             let longest = Double(max(size.x, max(size.y, size.z)))
             if longest.isFinite, longest > 0 {
