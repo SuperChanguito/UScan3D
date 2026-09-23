@@ -16,13 +16,6 @@ enum ScanMode: String, CaseIterable, Identifiable {
             return "Have your subject sit still and look forward. Orbit slowly around their head and shoulders."
         }
     }
-
-    /// Faces benefit from finer mesh detail than the default; .medium is the
-    /// highest level PhotogrammetrySession reliably reconstructs on-device
-    /// on iOS (.full and .raw target Mac-side reconstruction).
-    var reconstructionDetail: PhotogrammetrySession.Request.Detail {
-        self == .face ? .medium : .reduced
-    }
 }
 
 /// Drives one scan end-to-end: guided capture with ObjectCaptureSession,
@@ -112,7 +105,9 @@ final class ScanFlowModel: ObservableObject {
                 configuration: configuration)
             self.photoSession = photoSession
 
-            try photoSession.process(requests: [.modelFile(url: modelURL, detail: mode.reconstructionDetail)])
+            // Only .reduced (and .preview) are available for on-device
+            // reconstruction on iOS; .medium/.full/.raw are macOS-only.
+            try photoSession.process(requests: [.modelFile(url: modelURL, detail: .reduced)])
 
             for try await output in photoSession.outputs {
                 switch output {

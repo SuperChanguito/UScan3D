@@ -14,7 +14,7 @@ Bambu Lab X1 Carbon (or any 3D printer).
 
 | Stage | Tech |
 |---|---|
-| Guided capture | RealityKit `ObjectCaptureSession` — walk around the object, live point-cloud feedback, with prompts to flip the object (or scan another pass at a different height) once an orbit completes for full 360° coverage. An Object/Face-Bust mode picker tailors the instructions and skips the flip prompt for people; Face mode also reconstructs at `.medium` detail instead of `.reduced` for finer facial detail |
+| Guided capture | RealityKit `ObjectCaptureSession` — walk around the object, live point-cloud feedback, with prompts to flip the object (or scan another pass at a different height) once an orbit completes for full 360° coverage. An Object/Face-Bust mode picker tailors the on-screen instructions and skips the flip prompt for people (reconstruction detail is `.reduced` either way — it's the only level available on-device on iOS) |
 | Reconstruction | On-device `PhotogrammetrySession` — produces a textured USDZ mesh |
 | Preview | SceneKit viewer with orbit/zoom controls |
 | Mesh repair | Welds coincident vertices, finds boundary holes, caps them with a triangle fan so the export is watertight |
