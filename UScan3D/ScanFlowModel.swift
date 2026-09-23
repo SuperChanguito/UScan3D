@@ -2,6 +2,29 @@ import Foundation
 import RealityKit
 import SwiftUI
 
+enum ScanMode: String, CaseIterable, Identifiable {
+    case object = "Object"
+    case face = "Face / Bust"
+
+    var id: String { rawValue }
+
+    var setupHint: String {
+        switch self {
+        case .object:
+            return "Scan everyday objects for printing."
+        case .face:
+            return "Have your subject sit still and look forward. Orbit slowly around their head and shoulders."
+        }
+    }
+
+    /// Faces benefit from finer mesh detail than the default; .medium is the
+    /// highest level PhotogrammetrySession reliably reconstructs on-device
+    /// on iOS (.full and .raw target Mac-side reconstruction).
+    var reconstructionDetail: PhotogrammetrySession.Request.Detail {
+        self == .face ? .medium : .reduced
+    }
+}
+
 /// Drives one scan end-to-end: guided capture with ObjectCaptureSession,
 /// then on-device photogrammetry reconstruction into a USDZ model.
 @MainActor
@@ -17,12 +40,14 @@ final class ScanFlowModel: ObservableObject {
 
     @Published var phase: Phase = .setup
     @Published private(set) var session: ObjectCaptureSession?
+    private(set) var mode: ScanMode = .object
 
     private var scanDirectory: URL?
     private var photoSession: PhotogrammetrySession?
     private var isObservingSession = false
 
-    func startCapture() {
+    func startCapture(mode: ScanMode) {
+        self.mode = mode
         do {
             let directory = try ScanStore.newScanDirectory()
             scanDirectory = directory
@@ -87,7 +112,7 @@ final class ScanFlowModel: ObservableObject {
                 configuration: configuration)
             self.photoSession = photoSession
 
-            try photoSession.process(requests: [.modelFile(url: modelURL, detail: .reduced)])
+            try photoSession.process(requests: [.modelFile(url: modelURL, detail: mode.reconstructionDetail)])
 
             for try await output in photoSession.outputs {
                 switch output {

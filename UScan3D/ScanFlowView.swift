@@ -1,32 +1,28 @@
 import SwiftUI
 
 /// Full-screen container that walks one scan through its phases:
-/// capture -> reconstruction -> preview/export.
+/// mode selection -> capture -> reconstruction -> preview/export.
 struct ScanFlowView: View {
     @StateObject private var flow = ScanFlowModel()
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedMode: ScanMode = .object
 
     var body: some View {
         NavigationStack {
             content
         }
         .interactiveDismissDisabled()
-        .onAppear {
-            if case .setup = flow.phase {
-                flow.startCapture()
-            }
-        }
     }
 
     @ViewBuilder
     private var content: some View {
         switch flow.phase {
         case .setup:
-            ProgressView("Starting camera…")
+            setupView
 
         case .capturing:
             if let session = flow.session {
-                CaptureView(session: session) {
+                CaptureView(session: session, mode: flow.mode) {
                     flow.cancelAndCleanUp()
                     dismiss()
                 }
@@ -73,5 +69,33 @@ struct ScanFlowView: View {
                 .buttonStyle(.borderedProminent)
             }
         }
+    }
+
+    private var setupView: some View {
+        VStack(spacing: 24) {
+            Text("New Scan")
+                .font(.title2.bold())
+
+            Picker("Scan mode", selection: $selectedMode) {
+                ForEach(ScanMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text(selectedMode.setupHint)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            Button("Start Scanning") {
+                flow.startCapture(mode: selectedMode)
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button("Cancel", role: .cancel) { dismiss() }
+        }
+        .padding()
+        .navigationBarBackButtonHidden()
     }
 }

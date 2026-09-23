@@ -5,6 +5,7 @@ import SwiftUI
 /// camera feed, point cloud, and reticle; we overlay the stage controls.
 struct CaptureView: View {
     let session: ObjectCaptureSession
+    let mode: ScanMode
     let onCancel: () -> Void
 
     var body: some View {
@@ -35,7 +36,9 @@ struct CaptureView: View {
         switch session.state {
         case .ready:
             VStack(spacing: 12) {
-                instruction("Point the camera at your object, then tap Continue.")
+                instruction(mode == .face
+                    ? "Have your subject sit still, then point the camera at their head and shoulders. Tap Continue."
+                    : "Point the camera at your object, then tap Continue.")
                 actionButton("Continue") { _ = session.startDetecting() }
             }
         case .detecting:
@@ -50,8 +53,10 @@ struct CaptureView: View {
         case .capturing:
             if session.userCompletedScanPass {
                 VStack(spacing: 12) {
-                    instruction("Orbit complete. Flip the object to capture its underside, keep scanning this side, or finish.")
-                    if !session.feedback.contains(.objectNotFlippable) {
+                    instruction(mode == .face
+                        ? "Orbit complete. Keep scanning for more coverage, or finish."
+                        : "Orbit complete. Flip the object to capture its underside, keep scanning this side, or finish.")
+                    if mode == .object && !session.feedback.contains(.objectNotFlippable) {
                         actionButton("Flip Object & Continue") { session.beginNewScanPassAfterFlip() }
                     }
                     HStack(spacing: 12) {
@@ -62,7 +67,9 @@ struct CaptureView: View {
                 }
             } else {
                 VStack(spacing: 12) {
-                    instruction("Orbit the object slowly — \(session.numberOfShotsTaken) photos so far.")
+                    instruction(mode == .face
+                        ? "Orbit slowly around the head and shoulders — \(session.numberOfShotsTaken) photos so far."
+                        : "Orbit the object slowly — \(session.numberOfShotsTaken) photos so far.")
                     actionButton("Finish Scan") { session.finish() }
                 }
             }
