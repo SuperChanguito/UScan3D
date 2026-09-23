@@ -10,8 +10,10 @@ struct ModelPreviewView: View {
 
     @State private var scene: SCNScene?
     @State private var triangles: [Triangle] = []
+    @State private var baseTriangles: [Triangle] = []
     @State private var nativeSize: SIMD3<Float>?
     @State private var holesFilled = 0
+    @State private var flatBaseFraction: Double = 0
     @State private var targetLongestMM: Double = 100
     @State private var exportedSTL: URL?
     @State private var isExporting = false
@@ -81,6 +83,20 @@ struct ModelPreviewView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
+            HStack {
+                Text("Flat base")
+                Slider(value: $flatBaseFraction, in: 0...0.15, step: 0.01) { editing in
+                    if !editing { applyFlatBaseCut() }
+                }
+                Text(flatBaseFraction > 0 ? "\(Int(flatBaseCutMM.rounded())) mm" : "Off")
+                    .monospacedDigit()
+                    .frame(width: 64, alignment: .trailing)
+            }
+
+            Text("Slices off the bottom of the scan so it sits flush on the plate.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
             if let exportedSTL {
                 ShareLink(item: exportedSTL) {
                     Label("Share STL", systemImage: "square.and.arrow.up")
@@ -107,6 +123,20 @@ struct ModelPreviewView: View {
         .background(.bar)
     }
 
+    private var flatBaseCutMM: Double {
+        flatBaseFraction * Double(nativeSize?.z ?? 0)
+    }
+
+    private func applyFlatBaseCut() {
+        exportedSTL = nil
+        guard flatBaseFraction > 0, !baseTriangles.isEmpty else {
+            triangles = baseTriangles
+            return
+        }
+        let cut = MeshCutter.cutFlatBase(baseTriangles, fraction: flatBaseFraction)
+        triangles = MeshRepair.repair(cut).triangles
+    }
+
     private func load() async {
         let url = modelURL
         scene = try? SCNScene(url: url, options: nil)
@@ -116,6 +146,7 @@ struct ModelPreviewView: View {
                 return MeshRepair.repair(loaded)
             }.value
             triangles = repaired.triangles
+            baseTriangles = repaired.triangles
             holesFilled = repaired.holesFilled
 
             let size = STLExporter.sizeMM(of: repaired.triangles)

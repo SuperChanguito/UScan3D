@@ -18,6 +18,7 @@ Bambu Lab X1 Carbon (or any 3D printer).
 | Reconstruction | On-device `PhotogrammetrySession` — produces a textured USDZ mesh |
 | Preview | SceneKit viewer with orbit/zoom controls |
 | Mesh repair | Welds coincident vertices, finds boundary holes, caps them with a triangle fan so the export is watertight |
+| Flat base | Optional plane cut through the bottom of the scan (Sutherland-Hodgman triangle clipping), recapped by mesh repair, so it sits flush on the plate |
 | Export | Custom binary STL writer (ModelIO mesh extraction): millimeters, Z-up, centered, resting on the plate, scaled to your chosen print size (defaults to real-world size) |
 
 Exported STLs open directly in Bambu Studio. AirDrop or share them to your
@@ -53,7 +54,7 @@ The Xcode project itself is generated from [`project.yml`](project.yml) by
 
 - [ ] 3MF export (Bambu's native format)
 - [x] Mesh repair: hole filling and watertight check before export
-- [ ] Flat-base cut option so scans sit flush on the plate
+- [x] Flat-base cut option so scans sit flush on the plate
 - [ ] Multiple scan passes / flip-object support for full 360° geometry
 - [ ] Direct upload to the X1 Carbon over LAN (FTP/MQTT)
 - [ ] Face scan mode
