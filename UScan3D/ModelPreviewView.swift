@@ -4,6 +4,14 @@ import simd
 
 /// Interactive preview of the reconstructed model plus print-ready STL export.
 /// The STL is written in millimeters, Z-up, centered on the plate origin.
+enum ExportFormat: String, CaseIterable, Identifiable {
+    case stl = "STL"
+    case threeMF = "3MF"
+
+    var id: String { rawValue }
+    var fileExtension: String { self == .stl ? "stl" : "3mf" }
+}
+
 struct ModelPreviewView: View {
     let modelURL: URL
     var onDone: (() -> Void)? = nil
@@ -15,7 +23,8 @@ struct ModelPreviewView: View {
     @State private var holesFilled = 0
     @State private var flatBaseFraction: Double = 0
     @State private var targetLongestMM: Double = 100
-    @State private var exportedSTL: URL?
+    @State private var exportFormat: ExportFormat = .stl
+    @State private var exportedFile: URL?
     @State private var isExporting = false
     @State private var errorMessage: String?
 
@@ -72,7 +81,7 @@ struct ModelPreviewView: View {
             HStack {
                 Text("Print size")
                 Slider(value: $targetLongestMM, in: 10...256, step: 1) { _ in
-                    exportedSTL = nil
+                    exportedFile = nil
                 }
                 Text("\(Int(targetLongestMM)) mm")
                     .monospacedDigit()
@@ -97,21 +106,29 @@ struct ModelPreviewView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            if let exportedSTL {
-                ShareLink(item: exportedSTL) {
-                    Label("Share STL", systemImage: "square.and.arrow.up")
+            Picker("Format", selection: $exportFormat) {
+                ForEach(ExportFormat.allCases) { format in
+                    Text(format.rawValue).tag(format)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: exportFormat) { _, _ in exportedFile = nil }
+
+            if let exportedFile {
+                ShareLink(item: exportedFile) {
+                    Label("Share \(exportFormat.rawValue)", systemImage: "square.and.arrow.up")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
             } else {
                 Button {
-                    exportSTL()
+                    exportModel()
                 } label: {
                     if isExporting {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                     } else {
-                        Label("Create STL for printing", systemImage: "cube")
+                        Label("Create \(exportFormat.rawValue) for printing", systemImage: "cube")
                             .frame(maxWidth: .infinity)
                     }
                 }
@@ -128,7 +145,7 @@ struct ModelPreviewView: View {
     }
 
     private func applyFlatBaseCut() {
-        exportedSTL = nil
+        exportedFile = nil
         guard flatBaseFraction > 0, !baseTriangles.isEmpty else {
             triangles = baseTriangles
             return
@@ -160,23 +177,29 @@ struct ModelPreviewView: View {
         }
     }
 
-    private func exportSTL() {
+    private func exportModel() {
         isExporting = true
         let trianglesToExport = triangles
         let sizeMM = Float(targetLongestMM)
+        let format = exportFormat
         let outputURL = modelURL.deletingLastPathComponent()
-            .appendingPathComponent("U-Scan3D-\(Int(targetLongestMM))mm.stl")
+            .appendingPathComponent("U-Scan3D-\(Int(targetLongestMM))mm.\(format.fileExtension)")
 
         Task.detached(priority: .userInitiated) {
             do {
-                try STLExporter.writeBinarySTL(trianglesToExport, to: outputURL, longestSideMM: sizeMM)
+                switch format {
+                case .stl:
+                    try STLExporter.writeBinarySTL(trianglesToExport, to: outputURL, longestSideMM: sizeMM)
+                case .threeMF:
+                    try ThreeMFExporter.write3MF(trianglesToExport, to: outputURL, longestSideMM: sizeMM)
+                }
                 await MainActor.run {
-                    exportedSTL = outputURL
+                    exportedFile = outputURL
                     isExporting = false
                 }
             } catch {
                 await MainActor.run {
-                    errorMessage = "STL export failed: \(error.localizedDescription)"
+                    errorMessage = "\(format.rawValue) export failed: \(error.localizedDescription)"
                     isExporting = false
                 }
             }

@@ -19,7 +19,7 @@ Bambu Lab X1 Carbon (or any 3D printer).
 | Preview | SceneKit viewer with orbit/zoom controls |
 | Mesh repair | Welds coincident vertices, finds boundary holes, caps them with a triangle fan so the export is watertight |
 | Flat base | Optional plane cut through the bottom of the scan (Sutherland-Hodgman triangle clipping), recapped by mesh repair, so it sits flush on the plate |
-| Export | Custom binary STL writer (ModelIO mesh extraction): millimeters, Z-up, centered, resting on the plate, scaled to your chosen print size (defaults to real-world size) |
+| Export | Binary STL or 3MF (Bambu's native format, written as a minimal OPC zip package), millimeters, Z-up, centered, resting on the plate, scaled to your chosen print size (defaults to real-world size) |
 
 Exported STLs open directly in Bambu Studio. AirDrop or share them to your
 computer, or open in the Bambu Handy app.
@@ -52,7 +52,7 @@ The Xcode project itself is generated from [`project.yml`](project.yml) by
 
 ## Roadmap
 
-- [ ] 3MF export (Bambu's native format)
+- [x] 3MF export (Bambu's native format)
 - [x] Mesh repair: hole filling and watertight check before export
 - [x] Flat-base cut option so scans sit flush on the plate
 - [ ] Multiple scan passes / flip-object support for full 360° geometry

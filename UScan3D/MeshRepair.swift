@@ -1,10 +1,11 @@
 import Foundation
 import simd
 
-/// A mesh with shared vertices, needed to find boundary edges and holes.
-/// Photogrammetry output can span several submeshes with duplicated
-/// vertices at their shared boundaries, so positions are welded first.
-private struct IndexedMesh {
+/// A mesh with shared vertices, needed to find boundary edges and holes
+/// (and to write a compact indexed format like 3MF). Photogrammetry output
+/// can span several submeshes with duplicated vertices at their shared
+/// boundaries, so positions are welded first.
+struct IndexedMesh {
     var vertices: [SIMD3<Float>]
     var triangles: [(Int, Int, Int)]
 }
@@ -41,7 +42,7 @@ enum MeshRepair {
 
     /// Merges vertices within a small tolerance (0.01mm at scan scale) so
     /// shared edges between submeshes are recognized as the same edge.
-    private static func weld(_ triangles: [Triangle], epsilon: Float = 1e-5) -> IndexedMesh {
+    static func weld(_ triangles: [Triangle], epsilon: Float = 1e-5) -> IndexedMesh {
         var vertices: [SIMD3<Float>] = []
         var lookup: [SIMD3<Int32>: Int] = [:]
 

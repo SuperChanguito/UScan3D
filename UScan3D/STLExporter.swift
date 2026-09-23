@@ -70,9 +70,10 @@ enum STLExporter {
         return (maxPoint - minPoint) * 1000
     }
 
-    /// Binary STL, scaled so the longest side is `longestSideMM`, centered on
-    /// X/Y and resting on Z = 0 so it lands on the build plate in the slicer.
-    static func writeBinarySTL(_ triangles: [Triangle], to url: URL, longestSideMM: Float) throws {
+    /// Scales the mesh so its longest side is `longestSideMM`, centers it on
+    /// X/Y, and rests it on Z = 0 so it lands on the build plate in the
+    /// slicer. Shared by every export format.
+    static func place(_ triangles: [Triangle], longestSideMM: Float) throws -> [Triangle] {
         guard !triangles.isEmpty else { throw STLExportError.noGeometry }
 
         let (minPoint, maxPoint) = bounds(of: triangles)
@@ -81,22 +82,31 @@ enum STLExporter {
         let scale = longest > 0 ? longestSideMM / longest : 1
         let anchor = SIMD3<Float>((minPoint.x + maxPoint.x) / 2, (minPoint.y + maxPoint.y) / 2, minPoint.z)
 
-        func place(_ vertex: SIMD3<Float>) -> SIMD3<Float> {
+        func placeVertex(_ vertex: SIMD3<Float>) -> SIMD3<Float> {
             (vertex - anchor) * scale
         }
 
+        return triangles.map {
+            Triangle(a: placeVertex($0.a), b: placeVertex($0.b), c: placeVertex($0.c))
+        }
+    }
+
+    /// Binary STL of an already-placed mesh (see `place(_:longestSideMM:)`).
+    static func writeBinarySTL(_ triangles: [Triangle], to url: URL, longestSideMM: Float) throws {
+        let placedTriangles = try place(triangles, longestSideMM: longestSideMM)
+
         var data = Data()
-        data.reserveCapacity(84 + triangles.count * 50)
+        data.reserveCapacity(84 + placedTriangles.count * 50)
 
         var header = Data("U-Scan3D binary STL".utf8)
         header.append(Data(count: 80 - header.count))
         data.append(header)
-        appendUInt32(UInt32(triangles.count), to: &data)
+        appendUInt32(UInt32(placedTriangles.count), to: &data)
 
-        for triangle in triangles {
-            let a = place(triangle.a)
-            let b = place(triangle.b)
-            let c = place(triangle.c)
+        for triangle in placedTriangles {
+            let a = triangle.a
+            let b = triangle.b
+            let c = triangle.c
             var normal = simd_cross(b - a, c - a)
             let length = simd_length(normal)
             normal = length > 0 ? normal / length : SIMD3<Float>(0, 0, 0)
