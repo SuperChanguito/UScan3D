@@ -37,6 +37,9 @@ struct ModelPreviewView: View {
     @State private var showingPrinterSettings = false
     @State private var isSendingToPrinter = false
     @State private var printerStatusMessage: String?
+    /// Set when Send to Printer was tapped before the printer was set up;
+    /// the upload continues once settings are saved.
+    @State private var pendingUpload: URL?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -65,9 +68,13 @@ struct ModelPreviewView: View {
             }
         }
         .task { await load() }
-        .sheet(isPresented: $showingPrinterSettings) {
+        .sheet(isPresented: $showingPrinterSettings, onDismiss: { pendingUpload = nil }) {
             PrinterSettingsView(current: printerSettings) { updated in
                 printerSettings = updated
+                if let pendingUpload {
+                    self.pendingUpload = nil
+                    sendToPrinter(pendingUpload, using: updated)
+                }
             }
         }
         .alert(
@@ -210,9 +217,10 @@ struct ModelPreviewView: View {
         meshIsValid = repair.isValid
     }
 
-    private func sendToPrinter(_ fileURL: URL) {
+    private func sendToPrinter(_ fileURL: URL, using savedSettings: PrinterSettings? = nil) {
         printerStatusMessage = nil
-        guard let printerSettings else {
+        guard let printerSettings = savedSettings ?? printerSettings else {
+            pendingUpload = fileURL
             showingPrinterSettings = true
             return
         }
