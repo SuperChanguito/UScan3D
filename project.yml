@@ -16,6 +16,7 @@ targets:
       properties:
         CFBundleDisplayName: U-Scan3D
         NSCameraUsageDescription: U-Scan3D uses the camera to scan real objects into 3D models for printing.
+        NSLocalNetworkUsageDescription: U-Scan3D connects to your Bambu Lab printer over Wi-Fi to send print files.
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

@@ -27,6 +27,10 @@ struct ModelPreviewView: View {
     @State private var exportedFile: URL?
     @State private var isExporting = false
     @State private var errorMessage: String?
+    @State private var printerSettings: PrinterSettings? = PrinterSettings.load()
+    @State private var showingPrinterSettings = false
+    @State private var isSendingToPrinter = false
+    @State private var printerStatusMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,6 +45,13 @@ struct ModelPreviewView: View {
         .navigationTitle("Your Scan")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingPrinterSettings = true
+                } label: {
+                    Image(systemName: "printer")
+                }
+            }
             if let onDone {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", action: onDone)
@@ -48,6 +59,11 @@ struct ModelPreviewView: View {
             }
         }
         .task { await load() }
+        .sheet(isPresented: $showingPrinterSettings) {
+            PrinterSettingsView(current: printerSettings) { updated in
+                printerSettings = updated
+            }
+        }
         .alert(
             "Export Problem",
             isPresented: Binding(
@@ -135,6 +151,28 @@ struct ModelPreviewView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(triangles.isEmpty || isExporting)
             }
+
+            if let exportedFile {
+                Button {
+                    sendToPrinter(exportedFile)
+                } label: {
+                    if isSendingToPrinter {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Label("Send to Printer (LAN)", systemImage: "wifi")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isSendingToPrinter)
+
+                if let printerStatusMessage {
+                    Text(printerStatusMessage)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .padding()
         .background(.bar)
@@ -152,6 +190,29 @@ struct ModelPreviewView: View {
         }
         let cut = MeshCutter.cutFlatBase(baseTriangles, fraction: flatBaseFraction)
         triangles = MeshRepair.repair(cut).triangles
+    }
+
+    private func sendToPrinter(_ fileURL: URL) {
+        printerStatusMessage = nil
+        guard let printerSettings else {
+            showingPrinterSettings = true
+            return
+        }
+        isSendingToPrinter = true
+        Task {
+            do {
+                try await BambuPrinterUploader.upload(fileURL: fileURL, to: printerSettings)
+                await MainActor.run {
+                    isSendingToPrinter = false
+                    printerStatusMessage = "Sent. It's staged on the printer's storage — slice it in Bambu Studio to make it printable."
+                }
+            } catch {
+                await MainActor.run {
+                    isSendingToPrinter = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
     }
 
     private func load() async {

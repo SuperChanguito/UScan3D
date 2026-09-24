@@ -20,9 +20,19 @@ Bambu Lab X1 Carbon (or any 3D printer).
 | Mesh repair | Welds coincident vertices, finds boundary holes, caps them with a triangle fan so the export is watertight |
 | Flat base | Optional plane cut through the bottom of the scan (Sutherland-Hodgman triangle clipping), recapped by mesh repair, so it sits flush on the plate |
 | Export | Binary STL or 3MF (Bambu's native format, written as a minimal OPC zip package), millimeters, Z-up, centered, resting on the plate, scaled to your chosen print size (defaults to real-world size) |
+| Send to Printer | Uploads the exported file straight to a Bambu X1 Carbon over LAN via its FTPS server (port 990, `bblp` / the printer's Access Code) — no computer needed for the *transfer*. See the caveat below. |
 
 Exported STLs open directly in Bambu Studio. AirDrop or share them to your
-computer, or open in the Bambu Handy app.
+computer, open in the Bambu Handy app, or send them to the printer directly
+over Wi-Fi from the app.
+
+**Caveat on "Send to Printer":** Bambu printers don't slice on-device — they
+only print G-code. This feature stages the raw (unsliced) STL/3MF on the
+printer's local storage over FTPS; it does **not** make the file printable by
+itself. You still need to open it in Bambu Studio on a computer to slice it
+(add supports, infill, etc.) before the printer can actually print it. Useful
+mainly as a quick way to get the file physically onto the printer's storage;
+not a full computer-free path to printing.
 
 ## Building without a Mac (zero cost)
 
@@ -56,5 +66,5 @@ The Xcode project itself is generated from [`project.yml`](project.yml) by
 - [x] Mesh repair: hole filling and watertight check before export
 - [x] Flat-base cut option so scans sit flush on the plate
 - [x] Multiple scan passes / flip-object support for full 360° geometry
-- [ ] Direct upload to the X1 Carbon over LAN (FTP/MQTT)
+- [x] Direct upload to the X1 Carbon over LAN (FTPS; see caveat above — MQTT print-trigger not implemented since the uploaded file isn't sliced anyway)
 - [x] Face scan mode
