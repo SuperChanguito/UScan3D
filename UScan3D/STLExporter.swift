@@ -2,12 +2,6 @@ import Foundation
 import ModelIO
 import simd
 
-struct Triangle: Sendable {
-    var a: SIMD3<Float>
-    var b: SIMD3<Float>
-    var c: SIMD3<Float>
-}
-
 enum STLExportError: LocalizedError {
     case noGeometry
 

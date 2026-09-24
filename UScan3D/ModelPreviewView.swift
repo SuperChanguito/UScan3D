@@ -17,10 +17,16 @@ struct ModelPreviewView: View {
     var onDone: (() -> Void)? = nil
 
     @State private var scene: SCNScene?
+    /// The mesh that will be exported: repaired, and flat-base cut if on.
     @State private var triangles: [Triangle] = []
-    @State private var baseTriangles: [Triangle] = []
+    /// The scan exactly as loaded, before any repair. The flat-base cut is
+    /// applied to this and then repaired once, so the hole count and
+    /// validity always describe the export.
+    @State private var rawTriangles: [Triangle] = []
+    @State private var uncutRepair: MeshRepair.Result?
     @State private var nativeSize: SIMD3<Float>?
     @State private var holesFilled = 0
+    @State private var meshIsValid = true
     @State private var flatBaseFraction: Double = 0
     @State private var targetLongestMM: Double = 100
     @State private var exportFormat: ExportFormat = .stl
@@ -92,6 +98,12 @@ struct ModelPreviewView: View {
                     systemImage: "wrench.and.screwdriver")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            if !meshIsValid {
+                Label("The base may need repair in Bambu Studio", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
 
             HStack {
@@ -184,12 +196,18 @@ struct ModelPreviewView: View {
 
     private func applyFlatBaseCut() {
         exportedFile = nil
-        guard flatBaseFraction > 0, !baseTriangles.isEmpty else {
-            triangles = baseTriangles
+        guard flatBaseFraction > 0, !rawTriangles.isEmpty else {
+            if let uncutRepair { show(uncutRepair) }
             return
         }
-        let cut = MeshCutter.cutFlatBase(baseTriangles, fraction: flatBaseFraction)
-        triangles = MeshRepair.repair(cut).triangles
+        let cut = MeshCutter.cutFlatBase(rawTriangles, fraction: flatBaseFraction)
+        show(MeshRepair.repair(cut))
+    }
+
+    private func show(_ repair: MeshRepair.Result) {
+        triangles = repair.triangles
+        holesFilled = repair.holesFilled
+        meshIsValid = repair.isValid
     }
 
     private func sendToPrinter(_ fileURL: URL) {
@@ -219,13 +237,13 @@ struct ModelPreviewView: View {
         let url = modelURL
         scene = try? SCNScene(url: url, options: nil)
         do {
-            let repaired = try await Task.detached(priority: .userInitiated) {
+            let (loaded, repaired) = try await Task.detached(priority: .userInitiated) {
                 let loaded = try STLExporter.loadTriangles(from: url)
-                return MeshRepair.repair(loaded)
+                return (loaded, MeshRepair.repair(loaded))
             }.value
-            triangles = repaired.triangles
-            baseTriangles = repaired.triangles
-            holesFilled = repaired.holesFilled
+            rawTriangles = loaded
+            uncutRepair = repaired
+            show(repaired)
 
             let size = STLExporter.sizeMM(of: repaired.triangles)
             nativeSize = size

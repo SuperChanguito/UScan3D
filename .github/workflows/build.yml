@@ -6,6 +6,17 @@ on:
   workflow_dispatch:
 
 jobs:
+  mesh-tests:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run mesh repair tests
+        run: |
+          swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift \
+            Tests/MeshTests/main.swift -o meshtests
+          ./meshtests
+
   build:
     runs-on: macos-15
     steps:
