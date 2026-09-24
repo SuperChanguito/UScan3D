@@ -25,8 +25,18 @@ struct ModelPreviewView: View {
     @State private var rawTriangles: [Triangle] = []
     @State private var uncutRepair: MeshRepair.Result?
     @State private var nativeSize: SIMD3<Float>?
+    /// Real-world size (mm) of `triangles` — after a flat-base cut the
+    /// longest side (which print scaling uses) can change.
+    @State private var exportMeshSize: SIMD3<Float>?
     @State private var holesFilled = 0
     @State private var meshIsValid = true
+    @State private var isProcessingMesh = false
+    /// Bumped on every flat-base change so a slow cut/repair finishing
+    /// after the slider moved again is ignored.
+    @State private var meshGeneration = 0
+    @State private var showPrintPreview = false
+    @State private var printPreviewScene: SCNScene?
+    @State private var previewGeneration = 0
     @State private var flatBaseFraction: Double = 0
     @State private var targetLongestMM: Double = 100
     @State private var exportFormat: ExportFormat = .stl
@@ -43,10 +53,11 @@ struct ModelPreviewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SceneView(scene: scene, options: [.allowsCameraControl, .autoenablesDefaultLighting])
+            SceneView(scene: displayedScene, options: [.allowsCameraControl, .autoenablesDefaultLighting])
+                .id(displayedScene.map { ObjectIdentifier($0) })
                 .overlay {
-                    if scene == nil {
-                        ProgressView("Loading preview…")
+                    if displayedScene == nil {
+                        ProgressView(showPrintPreview ? "Building print preview…" : "Loading preview…")
                     }
                 }
             exportPanel
@@ -115,8 +126,9 @@ struct ModelPreviewView: View {
 
             HStack {
                 Text("Print size")
-                Slider(value: $targetLongestMM, in: 10...256, step: 1) { _ in
+                Slider(value: $targetLongestMM, in: 10...256, step: 1) { editing in
                     exportedFile = nil
+                    if !editing { refreshPrintPreview() }
                 }
                 Text("\(Int(targetLongestMM)) mm")
                     .monospacedDigit()
@@ -132,14 +144,25 @@ struct ModelPreviewView: View {
                 Slider(value: $flatBaseFraction, in: 0...0.15, step: 0.01) { editing in
                     if !editing { applyFlatBaseCut() }
                 }
-                Text(flatBaseFraction > 0 ? "\(Int(flatBaseCutMM.rounded())) mm" : "Off")
-                    .monospacedDigit()
-                    .frame(width: 64, alignment: .trailing)
+                Group {
+                    if isProcessingMesh {
+                        ProgressView()
+                    } else {
+                        Text(flatBaseFraction > 0 ? String(format: "%.1f mm", flatBaseCutMM) : "Off")
+                    }
+                }
+                .monospacedDigit()
+                .frame(width: 64, alignment: .trailing)
             }
 
-            Text("Slices off the bottom of the scan so it sits flush on the plate.")
+            Text("Slices off the bottom of the scan so it sits flush on the plate (height at print size).")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+
+            Toggle("Print preview", isOn: $showPrintPreview)
+                .onChange(of: showPrintPreview) { _, isOn in
+                    if isOn { refreshPrintPreview() }
+                }
 
             Picker("Format", selection: $exportFormat) {
                 ForEach(ExportFormat.allCases) { format in
@@ -168,7 +191,7 @@ struct ModelPreviewView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(triangles.isEmpty || isExporting)
+                .disabled(triangles.isEmpty || isExporting || isProcessingMesh)
             }
 
             if let exportedFile {
@@ -197,24 +220,67 @@ struct ModelPreviewView: View {
         .background(.bar)
     }
 
+    private var displayedScene: SCNScene? {
+        showPrintPreview ? printPreviewScene : scene
+    }
+
+    /// How much the flat base removes, in millimeters on the print:
+    /// fraction × scanned height × print scale. The scale comes from the
+    /// exported (cut) mesh's longest side, which is what export uses.
     private var flatBaseCutMM: Double {
-        flatBaseFraction * Double(nativeSize?.z ?? 0)
+        guard let nativeSize, let exportMeshSize else { return 0 }
+        let exportLongest = Double(max(exportMeshSize.x, max(exportMeshSize.y, exportMeshSize.z)))
+        guard exportLongest > 0 else { return 0 }
+        return flatBaseFraction * Double(nativeSize.z) * (targetLongestMM / exportLongest)
     }
 
     private func applyFlatBaseCut() {
         exportedFile = nil
+        meshGeneration += 1
+        let generation = meshGeneration
         guard flatBaseFraction > 0, !rawTriangles.isEmpty else {
+            isProcessingMesh = false
             if let uncutRepair { show(uncutRepair) }
             return
         }
-        let cut = MeshCutter.cutFlatBase(rawTriangles, fraction: flatBaseFraction)
-        show(MeshRepair.repair(cut))
+
+        isProcessingMesh = true
+        let raw = rawTriangles
+        let fraction = flatBaseFraction
+        Task {
+            let repaired = await Task.detached(priority: .userInitiated) {
+                MeshRepair.repair(MeshCutter.cutFlatBase(raw, fraction: fraction))
+            }.value
+            // The slider moved again while this ran; a newer result is coming.
+            guard generation == meshGeneration else { return }
+            isProcessingMesh = false
+            show(repaired)
+        }
     }
 
     private func show(_ repair: MeshRepair.Result) {
         triangles = repair.triangles
         holesFilled = repair.holesFilled
         meshIsValid = repair.isValid
+        exportMeshSize = STLExporter.sizeMM(of: repair.triangles)
+        refreshPrintPreview()
+    }
+
+    /// Rebuilds the print preview from the export mesh at print scale.
+    private func refreshPrintPreview() {
+        guard showPrintPreview, !triangles.isEmpty else { return }
+        previewGeneration += 1
+        let generation = previewGeneration
+        let source = triangles
+        let sizeMM = Float(targetLongestMM)
+        printPreviewScene = nil
+        Task {
+            let buffers = await Task.detached(priority: .userInitiated) {
+                PrintPreview.buffers(for: source, longestSideMM: sizeMM)
+            }.value
+            guard generation == previewGeneration, let buffers else { return }
+            printPreviewScene = PrintPreview.scene(from: buffers)
+        }
     }
 
     private func sendToPrinter(_ fileURL: URL, using savedSettings: PrinterSettings? = nil) {
