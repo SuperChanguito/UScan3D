@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Full-screen container that walks one scan through its phases:
 /// mode selection -> capture -> reconstruction -> preview/export.
@@ -12,6 +13,23 @@ struct ScanFlowView: View {
             content
         }
         .interactiveDismissDisabled()
+        // Capture and reconstruction take minutes; don't let the screen
+        // auto-lock (which backgrounds the app) in the middle of them.
+        .onChange(of: keepsScreenAwake, initial: true) { _, awake in
+            UIApplication.shared.isIdleTimerDisabled = awake
+        }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+    }
+
+    private var keepsScreenAwake: Bool {
+        switch flow.phase {
+        case .capturing, .reconstructing:
+            return true
+        default:
+            return false
+        }
     }
 
     @ViewBuilder
