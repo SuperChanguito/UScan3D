@@ -130,15 +130,28 @@ final class ScanFlowModel: ObservableObject {
             // reconstruction on iOS; .medium/.full/.raw are macOS-only.
             try photoSession.process(requests: [.modelFile(url: modelURL, detail: .reduced)])
 
+            // PhotogrammetrySession still sends .processingComplete after a
+            // .requestError, so remember the error rather than letting the
+            // completion overwrite it with a success.
+            var requestErrorMessage: String?
             for try await output in photoSession.outputs {
                 switch output {
                 case .requestProgress(_, let fractionComplete):
-                    phase = .reconstructing(progress: fractionComplete)
+                    if requestErrorMessage == nil {
+                        phase = .reconstructing(progress: fractionComplete)
+                    }
                 case .processingComplete:
-                    phase = .finished(modelURL: modelURL)
+                    if let requestErrorMessage {
+                        phase = .failed(message: "Reconstruction failed: \(requestErrorMessage)")
+                    } else if FileManager.default.fileExists(atPath: modelURL.path) {
+                        phase = .finished(modelURL: modelURL)
+                    } else {
+                        phase = .failed(message: "Reconstruction finished but didn't produce a model file.")
+                    }
                 case .processingCancelled:
                     phase = .failed(message: "Reconstruction was cancelled.")
                 case .requestError(_, let error):
+                    requestErrorMessage = error.localizedDescription
                     phase = .failed(message: "Reconstruction failed: \(error.localizedDescription)")
                 default:
                     break
