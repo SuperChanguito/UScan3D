@@ -3,20 +3,44 @@ import Foundation
 import Network
 import Security
 
-struct PrinterSettings: Codable, Equatable {
+/// The printer's address (UserDefaults) and access code (Keychain — it's
+/// the printer's LAN password).
+struct PrinterSettings: Equatable {
     var host: String
     var accessCode: String
 
-    private static let userDefaultsKey = "com.mrgrisafe.UScan3D.printerSettings"
+    private static let hostKey = "com.mrgrisafe.UScan3D.printerHost"
+    private static let accessCodeService = "com.mrgrisafe.UScan3D.printerAccessCode"
+    private static let accessCodeAccount = "bblp"
+    /// Earlier versions stored both fields as JSON in UserDefaults.
+    private static let legacyUserDefaultsKey = "com.mrgrisafe.UScan3D.printerSettings"
 
     static func load() -> PrinterSettings? {
-        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey) else { return nil }
-        return try? JSONDecoder().decode(PrinterSettings.self, from: data)
+        migrateLegacySettings()
+        guard let host = UserDefaults.standard.string(forKey: hostKey), !host.isEmpty else { return nil }
+        let accessCode = Keychain.data(service: accessCodeService, account: accessCodeAccount)
+            .map { String(decoding: $0, as: UTF8.self) } ?? ""
+        return PrinterSettings(host: host, accessCode: accessCode)
     }
 
-    func save() {
-        guard let data = try? JSONEncoder().encode(self) else { return }
-        UserDefaults.standard.set(data, forKey: Self.userDefaultsKey)
+    @discardableResult
+    func save() -> Bool {
+        UserDefaults.standard.set(host, forKey: Self.hostKey)
+        return Keychain.set(Data(accessCode.utf8), service: Self.accessCodeService, account: Self.accessCodeAccount)
+    }
+
+    /// Moves settings saved by earlier versions into the Keychain, then
+    /// removes the plain-text copy (only once the Keychain write succeeded).
+    private static func migrateLegacySettings() {
+        guard let data = UserDefaults.standard.data(forKey: legacyUserDefaultsKey) else { return }
+        struct LegacySettings: Decodable {
+            var host: String
+            var accessCode: String
+        }
+        if let legacy = try? JSONDecoder().decode(LegacySettings.self, from: data) {
+            guard PrinterSettings(host: legacy.host, accessCode: legacy.accessCode).save() else { return }
+        }
+        UserDefaults.standard.removeObject(forKey: legacyUserDefaultsKey)
     }
 }
 
