@@ -264,13 +264,32 @@ struct ModelPreviewView: View {
         }
     }
 
+    /// e.g. U-Scan3D-20260923-1430-100mm.stl, named from the scan's
+    /// creation date, with -2, -3… appended rather than overwriting an
+    /// earlier export (here or on the printer's storage).
+    private func exportURL(sizeMM: Int, fileExtension: String) -> URL {
+        let scanDirectory = modelURL.deletingLastPathComponent()
+        let scanDate = (try? scanDirectory.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date()
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmm"
+        let baseName = "U-Scan3D-\(formatter.string(from: scanDate))-\(sizeMM)mm"
+
+        var candidate = scanDirectory.appendingPathComponent("\(baseName).\(fileExtension)")
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = scanDirectory.appendingPathComponent("\(baseName)-\(suffix).\(fileExtension)")
+            suffix += 1
+        }
+        return candidate
+    }
+
     private func exportModel() {
         isExporting = true
         let trianglesToExport = triangles
         let sizeMM = Float(targetLongestMM)
         let format = exportFormat
-        let outputURL = modelURL.deletingLastPathComponent()
-            .appendingPathComponent("U-Scan3D-\(Int(targetLongestMM))mm.\(format.fileExtension)")
+        let outputURL = exportURL(sizeMM: Int(targetLongestMM), fileExtension: format.fileExtension)
 
         Task.detached(priority: .userInitiated) {
             do {
