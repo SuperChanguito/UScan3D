@@ -175,6 +175,9 @@ final class ScanFlowModel: ObservableObject {
                         failReconstruction("Reconstruction failed: \(requestErrorMessage)")
                     } else if FileManager.default.fileExists(atPath: modelURL.path) {
                         phase = .finished(modelURL: modelURL)
+                        Task.detached(priority: .utility) {
+                            ScanStore.removeCaptureData(in: scanDirectory)
+                        }
                     } else {
                         failReconstruction("Reconstruction finished but didn't produce a model file.")
                     }

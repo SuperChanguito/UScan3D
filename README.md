@@ -22,6 +22,12 @@ Bambu Lab X1 Carbon (or any 3D printer).
 | Export | Binary STL or 3MF (Bambu's native format, written as a minimal OPC zip package), millimeters, Z-up, centered, resting on the plate, scaled to your chosen print size (defaults to real-world size) |
 | Send to Printer | Uploads the exported file straight to a Bambu X1 Carbon over LAN via its FTPS server (port 990, `bblp` / the printer's Access Code) — no computer needed for the *transfer*. See the caveat below. |
 
+**Storage:** a scan's captured photos (often hundreds of MB) are deleted once
+its 3D model has been built successfully — only the model and your exports
+are kept. If reconstruction fails, the photos are kept so you can tap
+**Try Again**; scans that never produced a model are cleaned up the next time
+the app launches.
+
 Exported STLs open directly in Bambu Studio. AirDrop or share them to your
 computer, open in the Bambu Handy app, or send them to the printer directly
 over Wi-Fi from the app.

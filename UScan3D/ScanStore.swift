@@ -9,6 +9,7 @@ struct SavedScan: Identifiable {
 
 /// Each scan lives in Documents/Scans/<UUID>/ with the captured photos,
 /// reconstruction checkpoints, the finished model.usdz, and any exported STLs.
+/// Photos and checkpoints are deleted once the model has been built.
 enum ScanStore {
 
     static var scansRoot: URL {
@@ -61,5 +62,29 @@ enum ScanStore {
 
     static func delete(_ scan: SavedScan) {
         try? FileManager.default.removeItem(at: scan.directory)
+    }
+
+    /// Deletes the captured photos and reconstruction checkpoints (often
+    /// hundreds of MB). Only call once model.usdz has been verified — until
+    /// then they're needed to retry reconstruction.
+    static func removeCaptureData(in scanDirectory: URL) {
+        try? FileManager.default.removeItem(at: imagesDirectory(in: scanDirectory))
+        try? FileManager.default.removeItem(at: snapshotsDirectory(in: scanDirectory))
+    }
+
+    /// Deletes scan folders that never produced a model (the app was killed
+    /// mid-scan, or a failed scan wasn't discarded). Call only at launch,
+    /// never while a scan flow is open.
+    static func purgeIncompleteScans() {
+        let fileManager = FileManager.default
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: scansRoot,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]) else {
+            return
+        }
+        for directory in entries where !fileManager.fileExists(atPath: modelURL(in: directory).path) {
+            try? fileManager.removeItem(at: directory)
+        }
     }
 }
