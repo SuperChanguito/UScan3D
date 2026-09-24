@@ -37,6 +37,7 @@ final class ScanFlowModel: ObservableObject {
 
     private var scanDirectory: URL?
     private var photoSession: PhotogrammetrySession?
+    private var reconstructionTask: Task<Void, Never>?
     private var isObservingSession = false
 
     func startCapture(mode: ScanMode) {
@@ -59,26 +60,42 @@ final class ScanFlowModel: ObservableObject {
     }
 
     func observeSession() async {
-        guard !isObservingSession, let session else { return }
+        guard !isObservingSession, let stateUpdates = session?.stateUpdates else { return }
         isObservingSession = true
-        for await state in session.stateUpdates {
-            switch state {
-            case .completed:
-                self.session = nil
-                await reconstruct()
-            case .failed(let error):
-                self.session = nil
-                phase = .failed(message: "Capture failed: \(error.localizedDescription)")
-            default:
+        defer { isObservingSession = false }
+
+        // Don't hold a strong reference to the session here: iOS won't run a
+        // PhotogrammetrySession until the ObjectCaptureSession is deallocated.
+        var captureCompleted = false
+        for await state in stateUpdates {
+            if case .completed = state {
+                captureCompleted = true
                 break
             }
+            if case .failed(let error) = state {
+                session = nil
+                phase = .failed(message: "Capture failed: \(error.localizedDescription)")
+                return
+            }
         }
-        isObservingSession = false
+        guard captureCompleted else { return }
+
+        session = nil
+        phase = .reconstructing(progress: 0)
+        // Run reconstruction outside this view-bound task: clearing `session`
+        // removes CaptureView, which cancels the .task that called us.
+        reconstructionTask = Task { [weak self] in
+            // Give the capture session a moment to fully tear down.
+            try? await Task.sleep(for: .seconds(1))
+            await self?.reconstruct()
+        }
     }
 
     func cancelAndCleanUp() {
         session?.cancel()
         session = nil
+        reconstructionTask?.cancel()
+        reconstructionTask = nil
         photoSession?.cancel()
         photoSession = nil
         if let scanDirectory {
@@ -88,12 +105,16 @@ final class ScanFlowModel: ObservableObject {
     }
 
     func cancelReconstruction() {
-        photoSession?.cancel()
+        reconstructionTask?.cancel()
+        if let photoSession {
+            photoSession.cancel()
+        } else {
+            phase = .failed(message: "Reconstruction was cancelled.")
+        }
     }
 
     private func reconstruct() async {
-        guard let scanDirectory else { return }
-        phase = .reconstructing(progress: 0)
+        guard let scanDirectory, !Task.isCancelled else { return }
 
         let modelURL = ScanStore.modelURL(in: scanDirectory)
         do {
@@ -122,6 +143,9 @@ final class ScanFlowModel: ObservableObject {
                 default:
                     break
                 }
+            }
+            if case .reconstructing = phase {
+                phase = .failed(message: "Reconstruction stopped before the model was finished.")
             }
         } catch {
             phase = .failed(message: "Reconstruction failed: \(error.localizedDescription)")
