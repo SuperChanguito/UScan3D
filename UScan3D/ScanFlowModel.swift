@@ -28,7 +28,9 @@ final class ScanFlowModel: ObservableObject {
         case capturing
         case reconstructing(progress: Double)
         case finished(modelURL: URL)
-        case failed(message: String)
+        /// `canRetry` is true when reconstruction failed but the captured
+        /// photos are still on disk, so it can be re-run without rescanning.
+        case failed(message: String, canRetry: Bool = false)
     }
 
     @Published var phase: Phase = .setup
@@ -109,14 +111,42 @@ final class ScanFlowModel: ObservableObject {
         if let photoSession {
             photoSession.cancel()
         } else {
-            phase = .failed(message: "Reconstruction was cancelled.")
+            failReconstruction("Reconstruction was cancelled.")
         }
+    }
+
+    /// Re-runs reconstruction from the photos already on disk. Uses the same
+    /// detached reconstructionTask pattern as the first attempt so it isn't
+    /// tied to (or cancelled with) any view's .task.
+    func retryReconstruction() {
+        guard scanDirectory != nil, photoSession == nil else { return }
+        reconstructionTask?.cancel()
+        phase = .reconstructing(progress: 0)
+        reconstructionTask = Task { [weak self] in
+            await self?.reconstruct()
+        }
+    }
+
+    private var hasCapturedImages: Bool {
+        guard let scanDirectory,
+              let contents = try? FileManager.default.contentsOfDirectory(
+                atPath: ScanStore.imagesDirectory(in: scanDirectory).path) else {
+            return false
+        }
+        return !contents.isEmpty
+    }
+
+    private func failReconstruction(_ message: String) {
+        phase = .failed(message: message, canRetry: hasCapturedImages)
     }
 
     private func reconstruct() async {
         guard let scanDirectory, !Task.isCancelled else { return }
 
         let modelURL = ScanStore.modelURL(in: scanDirectory)
+        // A partial file from an earlier failed attempt must not pass the
+        // "model exists" check below.
+        try? FileManager.default.removeItem(at: modelURL)
         do {
             var configuration = PhotogrammetrySession.Configuration()
             // Reusing the capture checkpoints makes reconstruction much faster.
@@ -142,26 +172,26 @@ final class ScanFlowModel: ObservableObject {
                     }
                 case .processingComplete:
                     if let requestErrorMessage {
-                        phase = .failed(message: "Reconstruction failed: \(requestErrorMessage)")
+                        failReconstruction("Reconstruction failed: \(requestErrorMessage)")
                     } else if FileManager.default.fileExists(atPath: modelURL.path) {
                         phase = .finished(modelURL: modelURL)
                     } else {
-                        phase = .failed(message: "Reconstruction finished but didn't produce a model file.")
+                        failReconstruction("Reconstruction finished but didn't produce a model file.")
                     }
                 case .processingCancelled:
-                    phase = .failed(message: "Reconstruction was cancelled.")
+                    failReconstruction("Reconstruction was cancelled.")
                 case .requestError(_, let error):
                     requestErrorMessage = error.localizedDescription
-                    phase = .failed(message: "Reconstruction failed: \(error.localizedDescription)")
+                    failReconstruction("Reconstruction failed: \(error.localizedDescription)")
                 default:
                     break
                 }
             }
             if case .reconstructing = phase {
-                phase = .failed(message: "Reconstruction stopped before the model was finished.")
+                failReconstruction("Reconstruction stopped before the model was finished.")
             }
         } catch {
-            phase = .failed(message: "Reconstruction failed: \(error.localizedDescription)")
+            failReconstruction("Reconstruction failed: \(error.localizedDescription)")
         }
         photoSession = nil
     }

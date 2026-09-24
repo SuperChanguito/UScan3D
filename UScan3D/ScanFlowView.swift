@@ -54,7 +54,7 @@ struct ScanFlowView: View {
                 dismiss()
             }
 
-        case .failed(let message):
+        case .failed(let message, let canRetry):
             VStack(spacing: 16) {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.largeTitle)
@@ -62,11 +62,22 @@ struct ScanFlowView: View {
                 Text(message)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
-                Button("Close") {
-                    flow.cancelAndCleanUp()
-                    dismiss()
+                if canRetry {
+                    Button("Try Again") {
+                        flow.retryReconstruction()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Discard Scan", role: .destructive) {
+                        flow.cancelAndCleanUp()
+                        dismiss()
+                    }
+                } else {
+                    Button("Close") {
+                        flow.cancelAndCleanUp()
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
             }
         }
     }
