@@ -20,6 +20,25 @@ enum ScanMode: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// Extra preparation advice shown on the setup screen.
+    var setupTips: [String] {
+        switch self {
+        case .object, .face:
+            return []
+        case .fullBody:
+            var tips = [
+                "The subject holds still for the whole scan (2–4 minutes) while a helper walks around them.",
+                "Arms slightly away from the body, feet shoulder-width apart, nothing touching them.",
+                "Bright, even light — no window or lamp right behind them.",
+                "Fitted, matte clothing with some pattern or texture scans best; plain dark or shiny clothes can lose tracking. Tie back long hair.",
+            ]
+            if !usesAreaMode {
+                tips.append("On iOS 17 you'll need to stand 2–3 m back to fit them in the box. iOS 18 or later lets you scan from about 1 m.")
+            }
+            return tips
+        }
+    }
+
     /// Full Body skips the bounding box and uses Object Capture's area mode
     /// (iOS 18+): a box around a standing person only fits in frame from
     /// 2–3 m away, which is too far indoors.

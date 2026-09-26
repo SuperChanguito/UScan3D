@@ -161,6 +161,17 @@ struct ScanFlowView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
+            if !selectedMode.setupTips.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(selectedMode.setupTips, id: \.self) { tip in
+                        Label(tip, systemImage: "checkmark.circle")
+                            .font(.caption)
+                    }
+                }
+                .padding()
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+            }
+
             Button("Start Scanning") {
                 flow.startCapture(mode: selectedMode)
             }
