@@ -1,7 +1,7 @@
 // Mesh repair regression tests. A plain executable (no XCTest) so CI can
 // build it with swiftc alongside the app's mesh code:
 //
-//   swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift UScan3D/PersonIsolator.swift \
+//   swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift UScan3D/PersonIsolator.swift UScan3D/HeadSwap.swift \
 //     Tests/MeshTests/main.swift -o meshtests && ./meshtests
 //
 // Each closed test mesh (meters, Z-up) gets a 10% flat-base cut and is then
@@ -231,6 +231,62 @@ for (name, settings) in [
         pad("\(handKept)", 5),
         pad("\(repaired.isValid)", 6),
         passed ? " PASS" : " FAIL")
+}
+
+// MARK: - Head swap (face detail on a Full Body scan)
+
+// A lopsided "bust" (0.18 m square, a nose on +x, one ear bump on +y, so no
+// rotation maps it onto itself), placed on a "torso" by a known rotation
+// and translation. The landmarks tapped on the body are off by up to ~1 cm,
+// as a finger would be; ICP has to recover the true placement.
+let bustMesh = gridPrism(
+    (0..<6).flatMap { x in (0..<6).map { y in (x, y) } } + [(6, 2), (6, 3), (2, 6)],
+    cell: 0.03, height: 0.35)
+let bustLandmarks = HeadSwap.Landmarks(
+    nose: vertex(0.21, 0.09, 0.25), leftEar: vertex(0.075, 0.21, 0.22), rightEar: vertex(0.075, 0, 0.22))
+
+let trueRotation = simd_matrix3x3(
+    simd_quatf(angle: 5 * .pi / 180, axis: SIMD3(1, 0, 0)) * simd_quatf(angle: 30 * .pi / 180, axis: SIMD3(0, 0, 1)))
+let trueTransform = HeadSwap.RigidTransform(rotation: trueRotation, translation: vertex(0.3, -0.2, 1.3))
+let torso = translate(gridPrism([(0, 0), (1, 0), (0, 1), (1, 1)], cell: 0.15, height: 1.25), by: vertex(0.15, -0.35, 0))
+let bodyMesh = torso + bustMesh.map { trueTransform.apply($0) }
+let bodyLandmarks = HeadSwap.Landmarks(
+    nose: trueTransform.apply(bustLandmarks.nose) + vertex(0.01, 0, 0.005),
+    leftEar: trueTransform.apply(bustLandmarks.leftEar) + vertex(-0.005, 0.008, 0),
+    rightEar: trueTransform.apply(bustLandmarks.rightEar) + vertex(0, -0.006, 0.01))
+
+print("")
+print("head swap        rough mm  fitted mm  fit rms mm  overlap mm  body ok  head ok  result")
+if let swap = HeadSwap.combine(
+    body: bodyMesh, bodyLandmarks: bodyLandmarks, bust: bustMesh, bustLandmarks: bustLandmarks),
+   let rough = HeadSwap.rigidTransform(from: bustLandmarks.points, to: bodyLandmarks.points) {
+    // Placement error over every bust vertex, before and after ICP.
+    func placementError(_ transform: HeadSwap.RigidTransform) -> Float {
+        bustMesh.flatMap { [$0.a, $0.b, $0.c] }
+            .map { simd_length(transform.apply($0) - trueTransform.apply($0)) }
+            .max() ?? .infinity
+    }
+    let roughError = placementError(rough)
+    let fittedError = placementError(swap.transform)
+    let bodyTop = bounds(swap.body.triangles).max.z
+    let headBottom = bounds(swap.head.triangles).min.z
+    let overlap = bodyTop - headBottom
+    let passed = fittedError < 0.003 && swap.fitError < 0.004 &&
+        abs(overlap - HeadSwap.neckOverlap) < 0.002 &&
+        swap.body.isValid && swap.head.isValid
+    if !passed { failures += 1 }
+    print(
+        "lopsided-bust   ",
+        pad(String(format: "%.2f", roughError * 1000), 8),
+        pad(String(format: "%.2f", fittedError * 1000), 10),
+        pad(String(format: "%.2f", swap.fitError * 1000), 11),
+        pad(String(format: "%.1f", overlap * 1000), 11),
+        pad("\(swap.body.isValid)", 8),
+        pad("\(swap.head.isValid)", 8),
+        passed ? " PASS" : " FAIL")
+} else {
+    failures += 1
+    print("lopsided-bust    combine returned nil  FAIL")
 }
 
 if failures > 0 {

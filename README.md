@@ -100,7 +100,7 @@ the result is valid, has no upside-down cap faces, and that the cap area
 matches the true cross-section within 1%. To run it on a Mac:
 
 ```sh
-swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift UScan3D/PersonIsolator.swift   Tests/MeshTests/main.swift -o meshtests && ./meshtests
+swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift UScan3D/PersonIsolator.swift UScan3D/HeadSwap.swift   Tests/MeshTests/main.swift -o meshtests && ./meshtests
 ```
 
 The Xcode project itself is generated from [`project.yml`](project.yml) by
