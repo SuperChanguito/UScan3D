@@ -5,6 +5,7 @@ import SwiftUI
 enum ScanMode: String, CaseIterable, Identifiable {
     case object = "Object"
     case face = "Face / Bust"
+    case fullBody = "Full Body"
 
     var id: String { rawValue }
 
@@ -14,8 +15,54 @@ enum ScanMode: String, CaseIterable, Identifiable {
             return "Scan everyday objects for printing."
         case .face:
             return "Have your subject sit still and look forward. Orbit slowly around their head and shoulders."
+        case .fullBody:
+            return "You'll need a helper to hold the phone. Have your subject stand still in an open space, arms slightly away from their body."
         }
     }
+
+    /// Shown before object detection starts.
+    var readyInstruction: String {
+        switch self {
+        case .object:
+            return "Point the camera at your object, then tap Continue."
+        case .face:
+            return "Have your subject sit still, then point the camera at their head and shoulders. Tap Continue."
+        case .fullBody:
+            return "Have your subject stand still, then point the camera at their whole body, head to feet. Tap Continue."
+        }
+    }
+
+    var detectingInstruction: String {
+        switch self {
+        case .object, .face:
+            return "Move closer or farther until the box hugs the object."
+        case .fullBody:
+            return "Step back until the box covers your subject from head to feet."
+        }
+    }
+
+    func orbitInstruction(photos: Int) -> String {
+        switch self {
+        case .object:
+            return "Orbit the object slowly — \(photos) photos so far."
+        case .face:
+            return "Orbit slowly around the head and shoulders — \(photos) photos so far."
+        case .fullBody:
+            return "Walk slowly around your subject at chest height — \(photos) photos so far."
+        }
+    }
+
+    var orbitCompleteInstruction: String {
+        switch self {
+        case .object:
+            return "Orbit complete. Flip the object to capture its underside, keep scanning this side, or finish."
+        case .face, .fullBody:
+            return "Orbit complete. Keep scanning for more coverage, or finish."
+        }
+    }
+
+    /// People can't be turned upside down.
+    var allowsFlip: Bool { self == .object }
 }
 
 /// Drives one scan end-to-end: guided capture with ObjectCaptureSession,

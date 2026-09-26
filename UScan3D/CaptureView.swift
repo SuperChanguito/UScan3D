@@ -38,14 +38,12 @@ struct CaptureView: View {
         switch session.state {
         case .ready:
             VStack(spacing: 12) {
-                instruction(mode == .face
-                    ? "Have your subject sit still, then point the camera at their head and shoulders. Tap Continue."
-                    : "Point the camera at your object, then tap Continue.")
+                instruction(mode.readyInstruction)
                 actionButton("Continue") { _ = session.startDetecting() }
             }
         case .detecting:
             VStack(spacing: 12) {
-                instruction("Move closer or farther until the box hugs the object.")
+                instruction(mode.detectingInstruction)
                 HStack(spacing: 12) {
                     Button("Reset") { session.resetDetection() }
                         .buttonStyle(.bordered)
@@ -55,10 +53,8 @@ struct CaptureView: View {
         case .capturing:
             if session.userCompletedScanPass {
                 VStack(spacing: 12) {
-                    instruction(mode == .face
-                        ? "Orbit complete. Keep scanning for more coverage, or finish."
-                        : "Orbit complete. Flip the object to capture its underside, keep scanning this side, or finish.")
-                    if mode == .object && !session.feedback.contains(.objectNotFlippable) {
+                    instruction(mode.orbitCompleteInstruction)
+                    if mode.allowsFlip && !session.feedback.contains(.objectNotFlippable) {
                         Text("Flipping works best on objects with detail on every side. Try laying it on its side instead of upside down, keep it in the same spot, and don't change the lighting. Flat-bottomed objects: skip the flip and use Flat base instead.")
                             .font(.caption)
                             .multilineTextAlignment(.center)
@@ -80,9 +76,7 @@ struct CaptureView: View {
                 }
             } else {
                 VStack(spacing: 12) {
-                    instruction(mode == .face
-                        ? "Orbit slowly around the head and shoulders — \(session.numberOfShotsTaken) photos so far."
-                        : "Orbit the object slowly — \(session.numberOfShotsTaken) photos so far.")
+                    instruction(mode.orbitInstruction(photos: session.numberOfShotsTaken))
                     actionButton("Finish Scan") { session.finish() }
                 }
             }
