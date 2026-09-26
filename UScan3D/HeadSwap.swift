@@ -193,54 +193,133 @@ enum HeadSwap {
 
     // MARK: - ICP
 
-    /// Iterative closest point: repeatedly pairs each (transformed) source
-    /// point with its nearest target point and re-solves the rigid fit.
-    /// The worst 20% of pairs are ignored each round, so parts one scan has
-    /// and the other doesn't (hair, a collar) don't drag the fit. Returns
-    /// the refined transform and its RMS gap.
+    /// A point on a scan's surface with that surface's unit normal.
+    struct Sample: Sendable {
+        var point: SIMD3<Float>
+        var normal: SIMD3<Float>
+    }
+
+    /// Point-to-plane ICP: repeatedly pairs each (transformed) source point
+    /// with its nearest target point and solves for the small rotation and
+    /// translation that best closes the gaps measured along the target's
+    /// surface normal. Unlike point-to-point ICP it doesn't stall sliding
+    /// along smooth surfaces. The worst 20% of pairs are ignored each round,
+    /// so parts one scan has and the other doesn't (hair, a collar) don't
+    /// drag the fit. Returns the refined transform and the RMS gap.
     static func refine(
-        _ initial: RigidTransform, source: [SIMD3<Float>], target: [SIMD3<Float>],
-        iterations: Int = 80
+        _ initial: RigidTransform, source: [Sample], target: [Sample],
+        iterations: Int = 60
     ) -> (RigidTransform, Float) {
         // Coarse search radius first (the tapped points can be a couple of
         // cm off), then tight.
-        let coarse = PointGrid(target, cellSize: 0.03)
-        let fine = PointGrid(target, cellSize: 0.01)
+        let coarse = SampleGrid(target, cellSize: 0.03)
+        let fine = SampleGrid(target, cellSize: 0.01)
 
         var transform = initial
         var rms = Float.greatestFiniteMagnitude
         for iteration in 0..<iterations {
-            let grid = iteration < iterations / 3 ? coarse : fine
-            var pairs: [(source: SIMD3<Float>, target: SIMD3<Float>, distance: Float)] = []
-            for point in source {
-                if let (nearest, distance) = grid.nearest(to: transform.apply(point)) {
-                    pairs.append((point, nearest, distance))
+            let grid = iteration < iterations / 4 ? coarse : fine
+            var pairs: [(point: SIMD3<Double>, target: Sample, distance: Float)] = []
+            for sample in source {
+                let moved = transform.apply(sample.point)
+                if let (nearest, distance) = grid.nearest(to: moved) {
+                    pairs.append((double3(moved), nearest, distance))
                 }
             }
-            guard pairs.count >= 3 else { break }
+            guard pairs.count >= 6 else { break }
             pairs.sort { $0.distance < $1.distance }
-            let kept = pairs.prefix(max(3, pairs.count * 8 / 10))
-            guard let next = rigidTransform(from: kept.map(\.source), to: kept.map(\.target)) else { break }
+            let kept = pairs.prefix(pairs.count * 8 / 10)
 
-            let newRMS = (kept.map { simd_length_squared(next.apply($0.source) - $0.target) }
-                .reduce(0, +) / Float(kept.count)).squareRoot()
-            transform = next
-            let improvement = rms - newRMS
-            rms = newRMS
-            if iteration >= iterations / 3 && improvement >= 0 && improvement < 1e-6 { break }
+            // Linearize about the kept points' centroid c: for a small
+            // rotation w and translation t, the gap along normal n becomes
+            // r + ((p - c) x n)·w + n·t. Least squares over all pairs.
+            let centroid = kept.map(\.point).reduce(.zero, +) / Double(kept.count)
+            var a = [[Double]](repeating: [Double](repeating: 0, count: 6), count: 6)
+            var b = [Double](repeating: 0, count: 6)
+            var sumSquares = 0.0
+            for pair in kept {
+                let n = double3(pair.target.normal)
+                let r = simd_dot(pair.point - double3(pair.target.point), n)
+                let arm = simd_cross(pair.point - centroid, n)
+                let j = [arm.x, arm.y, arm.z, n.x, n.y, n.z]
+                for row in 0..<6 {
+                    for col in 0..<6 { a[row][col] += j[row] * j[col] }
+                    b[row] -= j[row] * r
+                }
+                sumSquares += r * r
+            }
+            rms = Float((sumSquares / Double(kept.count)).squareRoot())
+            guard let x = solve(a, b) else { break }
+
+            let omega = SIMD3<Double>(x[0], x[1], x[2])
+            let step = SIMD3<Double>(x[3], x[4], x[5])
+            let angle = simd_length(omega)
+            let delta = angle > 1e-12
+                ? simd_quatd(angle: angle, axis: omega / angle)
+                : simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
+            // p' = dR (p - c) + c + t, on top of the current transform.
+            let deltaRotation = simd_matrix3x3(delta)
+            let rotation = deltaRotation * double3x3(transform.rotation)
+            let translation = deltaRotation * (double3(transform.translation) - centroid) + centroid + step
+            transform = RigidTransform(rotation: float3x3(rotation), translation: float3(translation))
+
+            if iteration >= iterations / 4 && angle < 1e-7 && simd_length(step) < 1e-7 { break }
         }
         return (transform, rms)
     }
 
-    /// Uniform hash grid for nearest-neighbor lookups within one cell size.
-    private struct PointGrid {
-        let cellSize: Float
-        var cells: [SIMD3<Int32>: [SIMD3<Float>]] = [:]
+    /// Solves the 6×6 system a·x = b by Gaussian elimination with partial
+    /// pivoting; nil if it's singular (e.g. a surface with no features to
+    /// pin down some direction).
+    private static func solve(_ matrix: [[Double]], _ rhs: [Double]) -> [Double]? {
+        var a = matrix
+        var b = rhs
+        let n = b.count
+        for col in 0..<n {
+            guard let pivot = (col..<n).max(by: { abs(a[$0][col]) < abs(a[$1][col]) }),
+                  abs(a[pivot][col]) > 1e-12 else { return nil }
+            a.swapAt(col, pivot)
+            b.swapAt(col, pivot)
+            for row in (col + 1)..<n {
+                let factor = a[row][col] / a[col][col]
+                for k in col..<n { a[row][k] -= factor * a[col][k] }
+                b[row] -= factor * b[col]
+            }
+        }
+        var x = [Double](repeating: 0, count: n)
+        for row in stride(from: n - 1, through: 0, by: -1) {
+            var sum = b[row]
+            for k in (row + 1)..<n { sum -= a[row][k] * x[k] }
+            x[row] = sum / a[row][row]
+        }
+        return x
+    }
 
-        init(_ points: [SIMD3<Float>], cellSize: Float) {
+    private static func double3(_ v: SIMD3<Float>) -> SIMD3<Double> {
+        SIMD3<Double>(Double(v.x), Double(v.y), Double(v.z))
+    }
+
+    private static func float3(_ v: SIMD3<Double>) -> SIMD3<Float> {
+        SIMD3<Float>(Float(v.x), Float(v.y), Float(v.z))
+    }
+
+    private static func double3x3(_ m: simd_float3x3) -> simd_double3x3 {
+        simd_double3x3(double3(m.columns.0), double3(m.columns.1), double3(m.columns.2))
+    }
+
+    private static func float3x3(_ m: simd_double3x3) -> simd_float3x3 {
+        simd_float3x3(float3(m.columns.0), float3(m.columns.1), float3(m.columns.2))
+    }
+
+    /// Uniform hash grid for nearest-neighbor lookups within one cell size.
+    private struct SampleGrid {
+        let cellSize: Float
+        var cells: [SIMD3<Int32>: [Sample]] = [:]
+
+        init(_ samples: [Sample], cellSize: Float) {
             self.cellSize = cellSize
-            for point in points {
-                cells[key(point), default: []].append(point)
+            for sample in samples {
+                cells[key(sample.point), default: []].append(sample)
             }
         }
 
@@ -251,17 +330,17 @@ enum HeadSwap {
                 Int32((point.z / cellSize).rounded(.down)))
         }
 
-        /// Nearest point within `cellSize`, or nil.
-        func nearest(to point: SIMD3<Float>) -> (SIMD3<Float>, Float)? {
+        /// Nearest sample within `cellSize`, or nil.
+        func nearest(to point: SIMD3<Float>) -> (Sample, Float)? {
             let center = key(point)
-            var best: SIMD3<Float>?
+            var best: Sample?
             var bestDistance = cellSize * cellSize
             for dx in Int32(-1)...1 {
                 for dy in Int32(-1)...1 {
                     for dz in Int32(-1)...1 {
                         guard let bucket = cells[center &+ SIMD3(dx, dy, dz)] else { continue }
                         for candidate in bucket {
-                            let distance = simd_length_squared(candidate - point)
+                            let distance = simd_length_squared(candidate.point - point)
                             if distance < bestDistance {
                                 bestDistance = distance
                                 best = candidate
@@ -276,16 +355,16 @@ enum HeadSwap {
 
     // MARK: - Surface sampling
 
-    /// Evenly spread points (about one per `spacing`² of area) on the
+    /// Evenly spread samples (about one per `spacing`² of area) on the
     /// surface within `radius` of `center`. Sampling the surface rather than
     /// using vertices makes the fit independent of how finely each scan was
-    /// triangulated. Deterministic, and capped at `limit` points.
+    /// triangulated. Deterministic, and capped at `limit` samples.
     static func surfacePoints(
         _ triangles: [Triangle], near center: SIMD3<Float>, radius: Float,
         spacing: Float = 0.004, limit: Int = 6000
-    ) -> [SIMD3<Float>] {
+    ) -> [Sample] {
         var random = SplitMix(seed: 0x5EED)
-        var points: [SIMD3<Float>] = []
+        var points: [Sample] = []
         let radiusSquared = radius * radius
         for triangle in triangles {
             let farthest = max(
@@ -295,8 +374,11 @@ enum HeadSwap {
             // Skip triangles entirely outside the sphere.
             guard simd_length(triangle.a - center) <= radius + farthest else { continue }
 
-            let area = simd_length(simd_cross(triangle.b - triangle.a, triangle.c - triangle.a)) / 2
-            let expected = area / (spacing * spacing)
+            let cross = simd_cross(triangle.b - triangle.a, triangle.c - triangle.a)
+            let length = simd_length(cross)
+            guard length > 0 else { continue }
+            let normal = cross / length
+            let expected = (length / 2) / (spacing * spacing)
             var count = Int(expected)
             if random.nextUnit() < expected - Float(count) { count += 1 }
             for _ in 0..<count {
@@ -305,7 +387,7 @@ enum HeadSwap {
                 if u + v > 1 { u = 1 - u; v = 1 - v }
                 let point = triangle.a + (triangle.b - triangle.a) * u + (triangle.c - triangle.a) * v
                 if simd_length_squared(point - center) <= radiusSquared {
-                    points.append(point)
+                    points.append(Sample(point: point, normal: normal))
                 }
             }
         }
