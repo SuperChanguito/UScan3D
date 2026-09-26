@@ -67,7 +67,12 @@ enum HeadSwap {
             return nil
         }
 
-        let bodyPoints = surfacePoints(body, near: bodyLandmarks.earMidpoint, radius: headRadius)
+        // The body's region is a bit bigger (and denser) than the bust's:
+        // the tapped points are a little off, so equal spheres wouldn't cover
+        // the same patch of head, and bust points near the edge with no true
+        // partner on the body would drag the fit sideways.
+        let bodyPoints = surfacePoints(
+            body, near: bodyLandmarks.earMidpoint, radius: headRadius + 0.03, spacing: 0.003, limit: 20000)
         let bustPoints = surfacePoints(bust, near: bustLandmarks.earMidpoint, radius: headRadius)
         guard bodyPoints.count >= 3, bustPoints.count >= 3 else { return nil }
         let (transform, fitError) = refine(rough, source: bustPoints, target: bodyPoints)
@@ -195,7 +200,7 @@ enum HeadSwap {
     /// the refined transform and its RMS gap.
     static func refine(
         _ initial: RigidTransform, source: [SIMD3<Float>], target: [SIMD3<Float>],
-        iterations: Int = 40
+        iterations: Int = 80
     ) -> (RigidTransform, Float) {
         // Coarse search radius first (the tapped points can be a couple of
         // cm off), then tight.
