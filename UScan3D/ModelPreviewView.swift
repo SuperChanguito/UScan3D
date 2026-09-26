@@ -14,10 +14,16 @@ enum ExportFormat: String, CaseIterable, Identifiable {
 
 struct ModelPreviewView: View {
     let modelURL: URL
+    /// nil for scans made before scan.json existed.
+    var scanInfo: ScanStore.ScanInfo? = nil
+    var onDone: (() -> Void)? = nil
+
     /// An area-mode Full Body scan: cut the person out of the floor and
     /// surroundings before anything else.
-    var isolatesPerson = false
-    var onDone: (() -> Void)? = nil
+    private var isolatesPerson: Bool { scanInfo?.usedAreaMode ?? false }
+    private var isFullBody: Bool { scanInfo?.mode == .fullBody }
+    /// Figurine size: a person at real size would max out the 256 mm plate.
+    private static let fullBodyPrintMM: Double = 150
 
     @State private var scene: SCNScene?
     /// The mesh that will be exported: repaired, and flat-base cut if on.
@@ -153,6 +159,12 @@ struct ModelPreviewView: View {
             Text("Longest side of the model. The Bambu X1 Carbon build plate is 256 mm.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+
+            if isFullBody && targetLongestMM < Self.fullBodyPrintMM {
+                Label("Ankles, wrists and fingers may be too thin to print below \(Int(Self.fullBodyPrintMM)) mm — add supports in Bambu Studio or print larger.", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
 
             HStack {
                 Text("Flat base")
@@ -416,13 +428,23 @@ struct ModelPreviewView: View {
             personNotFound = isolated.map { !$0.personFound } ?? false
             rawTriangles = isolated?.triangles ?? loaded
             uncutRepair = repaired
-            show(repaired)
 
             let size = STLExporter.sizeMM(of: repaired.triangles)
             nativeSize = size
             let longest = Double(max(size.x, max(size.y, size.z)))
-            if longest.isFinite, longest > 0 {
+            if isFullBody {
+                targetLongestMM = Self.fullBodyPrintMM
+            } else if longest.isFinite, longest > 0 {
                 targetLongestMM = min(max(longest.rounded(), 10), 256)
+            }
+            // Box-mode Full Body scans stand on rough, uneven feet; a slight
+            // flat base lets them stand. Area-mode scans already have one
+            // from the floor cut.
+            if isFullBody && !isolatesPerson {
+                flatBaseFraction = 0.01
+                applyFlatBaseCut()
+            } else {
+                show(repaired)
             }
         } catch {
             errorMessage = "Couldn't read the model for export: \(error.localizedDescription)"
