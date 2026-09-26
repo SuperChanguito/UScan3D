@@ -48,6 +48,19 @@ iOS 17 Full Body falls back to the box, so you'll have to stand well back.
 Each scan records its mode in `scan.json`, so saved scans reopen with the
 right processing, and the home list shows the scan type.
 
+**Face detail:** on-device reconstruction is coarse over a whole body, so a
+Full Body scan's preview offers **Add face detail from a Face / Bust scan**.
+Scan the same person in Face / Bust mode (same hair and clothes, head held
+the same way), then tap the nose tip, left ear and right ear on each scan.
+`HeadSwap` makes a rough fit from those three points (Horn's quaternion
+method), refines it with point-to-plane ICP between the two heads, cuts the
+body just under the chin and the bust 4 cm lower, and seals each piece. The
+two pieces overlap at the neck and are exported together as overlapping
+solids, which the slicer merges; sewing two scans' edges together exactly
+isn't reliable. The result (with the average gap between the heads) is
+saved as a new scan (`model.obj`); both originals are kept. Raised arms or
+long hair that crosses the neck cut will be sliced there too.
+
 Exported STLs open directly in Bambu Studio. AirDrop or share them to your
 computer, open in the Bambu Handy app, or send them to the printer directly
 over Wi-Fi from the app.
@@ -97,7 +110,12 @@ executable (no XCTest) compiled with `swiftc` together with the app's mesh
 code. It builds a box, a 64-sided cylinder, L- and U-shaped extrusions, a
 two-legged arch and a tube, applies a 10% flat-base cut, repairs it, and checks
 the result is valid, has no upside-down cap faces, and that the cap area
-matches the true cross-section within 1%. To run it on a Mac:
+matches the true cross-section within 1%. It also cuts a person out of a
+synthetic room (floor, a wall bigger than the person, a table, debris, a
+detached hand), and fits a lopsided "bust" placed on a "torso" by a known
+rotation from landmarks up to ~1 cm off, checking ICP recovers the
+placement within 3 mm and both pieces seal with a 4 cm neck overlap. To run
+it on a Mac:
 
 ```sh
 swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift UScan3D/PersonIsolator.swift UScan3D/HeadSwap.swift   Tests/MeshTests/main.swift -o meshtests && ./meshtests
@@ -133,4 +151,4 @@ The Xcode project itself is generated from [`project.yml`](project.yml) by
 - [x] Direct upload to the X1 Carbon over LAN (FTPS; see caveat above — MQTT print-trigger not implemented since the uploaded file isn't sliced anyway)
 - [x] Face scan mode
 - [x] Full Body scan mode (area mode + automatic cut-out)
-- [ ] Add face detail: swap a Full Body scan's head for a separate Face / Bust scan
+- [x] Add face detail: swap a Full Body scan's head for a separate Face / Bust scan
