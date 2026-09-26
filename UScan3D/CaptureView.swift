@@ -12,7 +12,7 @@ struct CaptureView: View {
 
     var body: some View {
         ZStack {
-            ObjectCaptureView(session: session)
+            captureView
                 .ignoresSafeArea()
 
             VStack {
@@ -33,13 +33,29 @@ struct CaptureView: View {
         }
     }
 
+    /// Area mode has no bounding box, so the object reticle is hidden.
+    @ViewBuilder
+    private var captureView: some View {
+        if #available(iOS 18.0, *), mode.usesAreaMode {
+            ObjectCaptureView(session: session)
+                .hideObjectReticle(true)
+        } else {
+            ObjectCaptureView(session: session)
+        }
+    }
+
     @ViewBuilder
     private var controls: some View {
         switch session.state {
         case .ready:
             VStack(spacing: 12) {
                 instruction(mode.readyInstruction)
-                actionButton("Continue") { _ = session.startDetecting() }
+                if mode.usesAreaMode {
+                    // Skipping startDetecting() is what starts area mode.
+                    actionButton("Start Capture") { session.startCapturing() }
+                } else {
+                    actionButton("Continue") { _ = session.startDetecting() }
+                }
             }
         case .detecting:
             VStack(spacing: 12) {
@@ -51,7 +67,9 @@ struct CaptureView: View {
                 }
             }
         case .capturing:
-            if session.userCompletedScanPass {
+            // Area mode is one continuous capture: the low/middle/high loops
+            // are all part of it, so there are no separate passes.
+            if session.userCompletedScanPass && !mode.usesAreaMode {
                 VStack(spacing: 12) {
                     instruction(mode.orbitCompleteInstruction)
                     if mode.allowsFlip && !session.feedback.contains(.objectNotFlippable) {

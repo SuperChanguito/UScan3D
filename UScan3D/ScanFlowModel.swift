@@ -16,17 +16,29 @@ enum ScanMode: String, CaseIterable, Identifiable {
         case .face:
             return "Have your subject sit still and look forward. Orbit slowly around their head and shoulders."
         case .fullBody:
-            return "You'll need a helper to hold the phone. Have your subject stand still in an open space, arms slightly away from their body."
+            return "You'll need a helper to hold the phone. Have your subject stand still with about 1 m of space all around them, arms slightly away from their body."
         }
     }
 
-    /// Shown before object detection starts.
+    /// Full Body skips the bounding box and uses Object Capture's area mode
+    /// (iOS 18+): a box around a standing person only fits in frame from
+    /// 2–3 m away, which is too far indoors.
+    var usesAreaMode: Bool {
+        if #available(iOS 18.0, *) {
+            return self == .fullBody
+        }
+        return false
+    }
+
+    /// Shown before object detection (or area capture) starts.
     var readyInstruction: String {
         switch self {
         case .object:
             return "Point the camera at your object, then tap Continue."
         case .face:
             return "Have your subject sit still, then point the camera at their head and shoulders. Tap Continue."
+        case .fullBody where usesAreaMode:
+            return "Stand about 1 m from your subject. Tap Start Capture, then walk three slow loops around them: low (legs and feet), middle, then high (head and shoulders)."
         case .fullBody:
             return "Have your subject stand still, then point the camera at their whole body, head to feet. Tap Continue."
         }
@@ -47,6 +59,8 @@ enum ScanMode: String, CaseIterable, Identifiable {
             return "Orbit the object slowly — \(photos) photos so far."
         case .face:
             return "Orbit slowly around the head and shoulders — \(photos) photos so far."
+        case .fullBody where usesAreaMode:
+            return "Low loop, middle loop, then high loop, about 1 m away — \(photos) photos so far. Tap Finish after the third loop."
         case .fullBody:
             return "Walk slowly around your subject at chest height — \(photos) photos so far."
         }
