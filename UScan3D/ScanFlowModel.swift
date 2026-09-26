@@ -2,7 +2,7 @@ import Foundation
 import RealityKit
 import SwiftUI
 
-enum ScanMode: String, CaseIterable, Identifiable {
+enum ScanMode: String, CaseIterable, Identifiable, Codable {
     case object = "Object"
     case face = "Face / Bust"
     case fullBody = "Full Body"
@@ -128,6 +128,7 @@ final class ScanFlowModel: ObservableObject {
         do {
             let directory = try ScanStore.newScanDirectory()
             scanDirectory = directory
+            ScanStore.saveInfo(.init(mode: mode, usedAreaMode: mode.usesAreaMode), in: directory)
 
             let session = ObjectCaptureSession()
             var configuration = ObjectCaptureSession.Configuration()

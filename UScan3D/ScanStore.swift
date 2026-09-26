@@ -5,13 +5,25 @@ struct SavedScan: Identifiable {
     let directory: URL
     let modelURL: URL
     let createdAt: Date
+    /// nil for scans made before scan.json existed.
+    let info: ScanStore.ScanInfo?
 }
 
 /// Each scan lives in Documents/Scans/<UUID>/ with the captured photos,
-/// reconstruction checkpoints, the pass boundaries (passes.json), the
-/// finished model.usdz, and any exported STLs. Photos and checkpoints are
-/// kept until the user approves the model, or for at most a week.
+/// reconstruction checkpoints, the scan's mode (scan.json), the pass
+/// boundaries (passes.json), the finished model.usdz, and any exported STLs.
+/// Photos and checkpoints are kept until the user approves the model, or
+/// for at most a week.
 enum ScanStore {
+
+    /// What kind of scan this is, so a saved scan reopens with the right
+    /// processing (e.g. cutting a Full Body scan out of its surroundings).
+    struct ScanInfo: Codable {
+        var mode: ScanMode
+        /// Captured without a bounding box, so the model includes the floor
+        /// and surroundings.
+        var usedAreaMode: Bool
+    }
 
     /// Where each extra capture pass began, so a rebuild can leave out the
     /// photos taken after the object was flipped.
@@ -59,6 +71,20 @@ enum ScanStore {
         scanDirectory.appendingPathComponent("model-building.usdz")
     }
 
+    static func infoURL(in scanDirectory: URL) -> URL {
+        scanDirectory.appendingPathComponent("scan.json")
+    }
+
+    static func saveInfo(_ info: ScanInfo, in scanDirectory: URL) {
+        guard let data = try? JSONEncoder().encode(info) else { return }
+        try? data.write(to: infoURL(in: scanDirectory), options: .atomic)
+    }
+
+    static func loadInfo(in scanDirectory: URL) -> ScanInfo? {
+        guard let data = try? Data(contentsOf: infoURL(in: scanDirectory)) else { return nil }
+        return try? JSONDecoder().decode(ScanInfo.self, from: data)
+    }
+
     static func passesURL(in scanDirectory: URL) -> URL {
         scanDirectory.appendingPathComponent("passes.json")
     }
@@ -94,7 +120,8 @@ enum ScanStore {
                 id: directory.lastPathComponent,
                 directory: directory,
                 modelURL: model,
-                createdAt: created)
+                createdAt: created,
+                info: loadInfo(in: directory))
         }
         .sorted { $0.createdAt > $1.createdAt }
     }

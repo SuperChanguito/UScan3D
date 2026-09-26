@@ -71,7 +71,7 @@ struct ScanFlowView: View {
             }
 
         case .finished(let modelURL):
-            ModelPreviewView(modelURL: modelURL) {
+            ModelPreviewView(modelURL: modelURL, isolatesPerson: flow.mode.usesAreaMode) {
                 dismiss()
             }
             .safeAreaInset(edge: .top) {

@@ -13,7 +13,7 @@ jobs:
 
       - name: Build and run mesh repair tests
         run: |
-          swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift \
+          swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift UScan3D/PersonIsolator.swift \
             Tests/MeshTests/main.swift -o meshtests
           ./meshtests
 

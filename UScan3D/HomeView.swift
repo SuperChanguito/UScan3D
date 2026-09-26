@@ -20,7 +20,9 @@ struct HomeView: View {
                     List {
                         ForEach(scans) { scan in
                             NavigationLink {
-                                ModelPreviewView(modelURL: scan.modelURL)
+                                ModelPreviewView(
+                                    modelURL: scan.modelURL,
+                                    isolatesPerson: scan.info?.usedAreaMode ?? false)
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(scan.createdAt.formatted(date: .abbreviated, time: .shortened))

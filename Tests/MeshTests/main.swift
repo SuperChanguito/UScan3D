@@ -1,7 +1,7 @@
 // Mesh repair regression tests. A plain executable (no XCTest) so CI can
 // build it with swiftc alongside the app's mesh code:
 //
-//   swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift \
+//   swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift UScan3D/PersonIsolator.swift \
 //     Tests/MeshTests/main.swift -o meshtests && ./meshtests
 //
 // Each closed test mesh (meters, Z-up) gets a 10% flat-base cut and is then
@@ -154,6 +154,82 @@ for testCase in cases {
         pad("\(upsideDown)", 7),
         pad("\(result.badEdgeCount)", 9),
         pad("\(result.warningCount)", 5),
+        passed ? " PASS" : " FAIL")
+}
+
+// MARK: - Person isolation (Full Body area-mode scans)
+
+/// Single-sided grid of `cell`-sized squares from `origin` along `u` and
+/// `v`, facing u × v. Shares vertices along its edges so it welds to
+/// neighbors built on the same grid.
+func sheet(origin: SIMD3<Float>, u: SIMD3<Float>, v: SIMD3<Float>, cols: Int, rows: Int) -> [Triangle] {
+    var mesh: [Triangle] = []
+    for i in 0..<cols {
+        for j in 0..<rows {
+            let p00 = origin + u * Float(i) + v * Float(j)
+            let p10 = p00 + u
+            let p11 = p00 + u + v
+            let p01 = p00 + v
+            mesh.append(Triangle(a: p00, b: p10, c: p11))
+            mesh.append(Triangle(a: p00, b: p11, c: p01))
+        }
+    }
+    return mesh
+}
+
+func translate(_ mesh: [Triangle], by offset: SIMD3<Float>) -> [Triangle] {
+    mesh.map { Triangle(a: $0.a + offset, b: $0.b + offset, c: $0.c + offset) }
+}
+
+func bounds(_ mesh: [Triangle]) -> (min: SIMD3<Float>, max: SIMD3<Float>) {
+    var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+    var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+    for t in mesh {
+        for p in [t.a, t.b, t.c] {
+            lo = simd_min(lo, p)
+            hi = simd_max(hi, p)
+        }
+    }
+    return (lo, hi)
+}
+
+// A 3 m square room corner: floor at z = 0, a 2.5 m wall welded to the
+// floor's +x edge (bigger than the person, so size alone would pick it), a
+// table, a scrap of debris, a 1.7 m "person" in the middle and a detached
+// "hand" beside them.
+let step: Float = 0.25
+let floorSheet = sheet(origin: vertex(-1.5, -1.5, 0), u: SIMD3(step, 0, 0), v: SIMD3(0, step, 0), cols: 12, rows: 12)
+let wallSheet = sheet(origin: vertex(1.5, -1.5, 0), u: SIMD3(0, step, 0), v: SIMD3(0, 0, step), cols: 12, rows: 10)
+let table = translate(gridPrism([(0, 0)], cell: 0.6, height: 0.75), by: vertex(-1.3, 0.5, 0))
+let debris = translate(gridPrism([(0, 0)], cell: 0.1, height: 0.1), by: vertex(0.9, -1.1, 0.05))
+let person = cylinder(radius: 0.2, height: 1.7, sides: 32)
+let hand = translate(gridPrism([(0, 0)], cell: 0.06, height: 0.06), by: vertex(0.18, -0.03, 1.0))
+let room = floorSheet + wallSheet + table + debris + person + hand
+
+print("")
+print("isolation        floor  person   minZ    maxZ   width  hand  valid  result")
+for (name, settings) in [
+    ("auto", PersonIsolator.Settings()),
+    ("crop-0.5m", PersonIsolator.Settings(floorClearance: 0.02, cropHalfWidth: 0.5)),
+] {
+    let isolated = PersonIsolator.isolate(room, settings: settings)
+    let repaired = MeshRepair.repair(isolated.triangles)
+    let (lo, hi) = bounds(isolated.triangles)
+    let handKept = hi.x > 0.23
+    let passed = isolated.floorFound && isolated.personFound &&
+        abs(lo.z - 0.02) < 0.005 && abs(hi.z - 1.7) < 0.005 &&
+        lo.x > -0.21 && hi.x < 0.25 && lo.y > -0.21 && hi.y < 0.21 &&
+        handKept && repaired.isValid
+    if !passed { failures += 1 }
+    print(
+        name.padding(toLength: 16, withPad: " ", startingAt: 0),
+        pad("\(isolated.floorFound)", 5),
+        pad("\(isolated.personFound)", 7),
+        pad(String(format: "%.3f", lo.z), 6),
+        pad(String(format: "%.3f", hi.z), 7),
+        pad(String(format: "%.3f", hi.x - lo.x), 7),
+        pad("\(handKept)", 5),
+        pad("\(repaired.isValid)", 6),
         passed ? " PASS" : " FAIL")
 }
 
