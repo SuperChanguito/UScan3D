@@ -1,7 +1,7 @@
 // Mesh repair regression tests. A plain executable (no XCTest) so CI can
 // build it with swiftc alongside the app's mesh code:
 //
-//   swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift \
+//   swiftc UScan3D/Triangle.swift UScan3D/MeshRepair.swift UScan3D/MeshCutter.swift UScan3D/PersonIsolator.swift UScan3D/HeadSwap.swift \
 //     Tests/MeshTests/main.swift -o meshtests && ./meshtests
 //
 // Each closed test mesh (meters, Z-up) gets a 10% flat-base cut and is then
@@ -155,6 +155,138 @@ for testCase in cases {
         pad("\(result.badEdgeCount)", 9),
         pad("\(result.warningCount)", 5),
         passed ? " PASS" : " FAIL")
+}
+
+// MARK: - Person isolation (Full Body area-mode scans)
+
+/// Single-sided grid of `cell`-sized squares from `origin` along `u` and
+/// `v`, facing u × v. Shares vertices along its edges so it welds to
+/// neighbors built on the same grid.
+func sheet(origin: SIMD3<Float>, u: SIMD3<Float>, v: SIMD3<Float>, cols: Int, rows: Int) -> [Triangle] {
+    var mesh: [Triangle] = []
+    for i in 0..<cols {
+        for j in 0..<rows {
+            let p00 = origin + u * Float(i) + v * Float(j)
+            let p10 = p00 + u
+            let p11 = p00 + u + v
+            let p01 = p00 + v
+            mesh.append(Triangle(a: p00, b: p10, c: p11))
+            mesh.append(Triangle(a: p00, b: p11, c: p01))
+        }
+    }
+    return mesh
+}
+
+func translate(_ mesh: [Triangle], by offset: SIMD3<Float>) -> [Triangle] {
+    mesh.map { Triangle(a: $0.a + offset, b: $0.b + offset, c: $0.c + offset) }
+}
+
+func bounds(_ mesh: [Triangle]) -> (min: SIMD3<Float>, max: SIMD3<Float>) {
+    var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+    var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+    for t in mesh {
+        for p in [t.a, t.b, t.c] {
+            lo = simd_min(lo, p)
+            hi = simd_max(hi, p)
+        }
+    }
+    return (lo, hi)
+}
+
+// A 3 m square room corner: floor at z = 0, a 2.5 m wall welded to the
+// floor's +x edge (bigger than the person, so size alone would pick it), a
+// table, a scrap of debris, a 1.7 m "person" in the middle and a detached
+// "hand" beside them.
+let step: Float = 0.25
+let floorSheet = sheet(origin: vertex(-1.5, -1.5, 0), u: SIMD3(step, 0, 0), v: SIMD3(0, step, 0), cols: 12, rows: 12)
+let wallSheet = sheet(origin: vertex(1.5, -1.5, 0), u: SIMD3(0, step, 0), v: SIMD3(0, 0, step), cols: 12, rows: 10)
+let table = translate(gridPrism([(0, 0)], cell: 0.6, height: 0.75), by: vertex(-1.3, 0.5, 0))
+let debris = translate(gridPrism([(0, 0)], cell: 0.1, height: 0.1), by: vertex(0.9, -1.1, 0.05))
+let person = cylinder(radius: 0.2, height: 1.7, sides: 32)
+let hand = translate(gridPrism([(0, 0)], cell: 0.06, height: 0.06), by: vertex(0.18, -0.03, 1.0))
+let room = floorSheet + wallSheet + table + debris + person + hand
+
+print("")
+print("isolation        floor  person   minZ    maxZ   width  hand  valid  result")
+for (name, settings) in [
+    ("auto", PersonIsolator.Settings()),
+    ("crop-0.5m", PersonIsolator.Settings(floorClearance: 0.02, cropHalfWidth: 0.5)),
+] {
+    let isolated = PersonIsolator.isolate(room, settings: settings)
+    let repaired = MeshRepair.repair(isolated.triangles)
+    let (lo, hi) = bounds(isolated.triangles)
+    let handKept = hi.x > 0.23
+    let passed = isolated.floorFound && isolated.personFound &&
+        abs(lo.z - 0.02) < 0.005 && abs(hi.z - 1.7) < 0.005 &&
+        lo.x > -0.21 && hi.x < 0.25 && lo.y > -0.21 && hi.y < 0.21 &&
+        handKept && repaired.isValid
+    if !passed { failures += 1 }
+    print(
+        name.padding(toLength: 16, withPad: " ", startingAt: 0),
+        pad("\(isolated.floorFound)", 5),
+        pad("\(isolated.personFound)", 7),
+        pad(String(format: "%.3f", lo.z), 6),
+        pad(String(format: "%.3f", hi.z), 7),
+        pad(String(format: "%.3f", hi.x - lo.x), 7),
+        pad("\(handKept)", 5),
+        pad("\(repaired.isValid)", 6),
+        passed ? " PASS" : " FAIL")
+}
+
+// MARK: - Head swap (face detail on a Full Body scan)
+
+// A lopsided "bust" (0.18 m square, a nose on +x, one ear bump on +y, so no
+// rotation maps it onto itself), placed on a "torso" by a known rotation
+// and translation. The landmarks tapped on the body are off by up to ~1 cm,
+// as a finger would be; ICP has to recover the true placement.
+let bustMesh = gridPrism(
+    (0..<6).flatMap { x in (0..<6).map { y in (x, y) } } + [(6, 2), (6, 3), (2, 6)],
+    cell: 0.03, height: 0.35)
+let bustLandmarks = HeadSwap.Landmarks(
+    nose: vertex(0.21, 0.09, 0.25), leftEar: vertex(0.075, 0.21, 0.22), rightEar: vertex(0.075, 0, 0.22))
+
+let trueRotation = simd_matrix3x3(
+    simd_quatf(angle: 5 * .pi / 180, axis: SIMD3(1, 0, 0)) * simd_quatf(angle: 30 * .pi / 180, axis: SIMD3(0, 0, 1)))
+let trueTransform = HeadSwap.RigidTransform(rotation: trueRotation, translation: vertex(0.3, -0.2, 1.3))
+let torso = translate(gridPrism([(0, 0), (1, 0), (0, 1), (1, 1)], cell: 0.15, height: 1.25), by: vertex(0.15, -0.35, 0))
+let bodyMesh = torso + bustMesh.map { trueTransform.apply($0) }
+let bodyLandmarks = HeadSwap.Landmarks(
+    nose: trueTransform.apply(bustLandmarks.nose) + vertex(0.01, 0, 0.005),
+    leftEar: trueTransform.apply(bustLandmarks.leftEar) + vertex(-0.005, 0.008, 0),
+    rightEar: trueTransform.apply(bustLandmarks.rightEar) + vertex(0, -0.006, 0.01))
+
+print("")
+print("head swap        rough mm  fitted mm  fit rms mm  overlap mm  body ok  head ok  result")
+if let swap = HeadSwap.combine(
+    body: bodyMesh, bodyLandmarks: bodyLandmarks, bust: bustMesh, bustLandmarks: bustLandmarks),
+   let rough = HeadSwap.rigidTransform(from: bustLandmarks.points, to: bodyLandmarks.points) {
+    // Placement error over every bust vertex, before and after ICP.
+    func placementError(_ transform: HeadSwap.RigidTransform) -> Float {
+        bustMesh.flatMap { [$0.a, $0.b, $0.c] }
+            .map { simd_length(transform.apply($0) - trueTransform.apply($0)) }
+            .max() ?? .infinity
+    }
+    let roughError = placementError(rough)
+    let fittedError = placementError(swap.transform)
+    let bodyTop = bounds(swap.body.triangles).max.z
+    let headBottom = bounds(swap.head.triangles).min.z
+    let overlap = bodyTop - headBottom
+    let passed = fittedError < 0.003 && swap.fitError < 0.004 &&
+        abs(overlap - HeadSwap.neckOverlap) < 0.002 &&
+        swap.body.isValid && swap.head.isValid
+    if !passed { failures += 1 }
+    print(
+        "lopsided-bust   ",
+        pad(String(format: "%.2f", roughError * 1000), 8),
+        pad(String(format: "%.2f", fittedError * 1000), 10),
+        pad(String(format: "%.2f", swap.fitError * 1000), 11),
+        pad(String(format: "%.1f", overlap * 1000), 11),
+        pad("\(swap.body.isValid)", 8),
+        pad("\(swap.head.isValid)", 8),
+        passed ? " PASS" : " FAIL")
+} else {
+    failures += 1
+    print("lopsided-bust    combine returned nil  FAIL")
 }
 
 if failures > 0 {

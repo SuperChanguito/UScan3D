@@ -14,15 +14,36 @@ enum ExportFormat: String, CaseIterable, Identifiable {
 
 struct ModelPreviewView: View {
     let modelURL: URL
+    /// nil for scans made before scan.json existed.
+    var scanInfo: ScanStore.ScanInfo? = nil
     var onDone: (() -> Void)? = nil
+
+    /// An area-mode Full Body scan: cut the person out of the floor and
+    /// surroundings before anything else.
+    private var isolatesPerson: Bool { scanInfo?.usedAreaMode ?? false }
+    private var isFullBody: Bool { scanInfo?.mode == .fullBody }
+    /// A Full Body scan whose head was already replaced from a bust scan.
+    private var hasFaceDetail: Bool { scanInfo?.faceDetailFrom != nil }
+    /// Figurine size: a person at real size would max out the 256 mm plate.
+    private static let fullBodyPrintMM: Double = 150
 
     @State private var scene: SCNScene?
     /// The mesh that will be exported: repaired, and flat-base cut if on.
     @State private var triangles: [Triangle] = []
-    /// The scan exactly as loaded, before any repair. The flat-base cut is
-    /// applied to this and then repaired once, so the hole count and
-    /// validity always describe the export.
+    /// The scan exactly as loaded from the file.
+    @State private var loadedTriangles: [Triangle] = []
+    /// The scan before any repair — the loaded mesh, or the person cut out
+    /// of it. The flat-base cut is applied to this and then repaired once,
+    /// so the hole count and validity always describe the export.
     @State private var rawTriangles: [Triangle] = []
+    @State private var floorClearanceCM: Double = 2
+    /// Half-width of the crop square in meters; the top of the range is off.
+    @State private var cropHalfWidth: Double = ModelPreviewView.cropOff
+    @State private var isIsolating = false
+    @State private var isolationGeneration = 0
+    @State private var personNotFound = false
+    @State private var showingFaceDetail = false
+    @State private var faceDetailSaved = false
     @State private var uncutRepair: MeshRepair.Result?
     @State private var nativeSize: SIMD3<Float>?
     /// Real-world size (mm) of `triangles` — after a flat-base cut the
@@ -61,6 +82,13 @@ struct ModelPreviewView: View {
                     }
                 }
             exportPanel
+                // On the panel, not the whole view: that already has the
+                // export alert, and one view can't reliably host two.
+                .alert("Saved as a New Scan", isPresented: $faceDetailSaved) {
+                    Button("OK") {}
+                } message: {
+                    Text("Find it in your scans list as \"Full Body + face detail\". This scan is unchanged.")
+                }
         }
         .navigationTitle("Your Scan")
         .navigationBarTitleDisplayMode(.inline)
@@ -88,6 +116,13 @@ struct ModelPreviewView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingFaceDetail) {
+            // The cut-out body, before any flat base: the new scan gets its
+            // own flat-base setting.
+            FaceDetailView(bodyTriangles: rawTriangles) {
+                faceDetailSaved = true
+            }
+        }
         .alert(
             "Export Problem",
             isPresented: Binding(
@@ -108,6 +143,21 @@ struct ModelPreviewView: View {
                     nativeSize.x, nativeSize.y, nativeSize.z))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            }
+
+            if isolatesPerson {
+                isolationControls
+            }
+
+            if isFullBody && !hasFaceDetail {
+                Button {
+                    showingFaceDetail = true
+                } label: {
+                    Label("Add face detail from a Face / Bust scan", systemImage: "face.smiling")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(rawTriangles.isEmpty || isIsolating)
             }
 
             if holesFilled > 0 {
@@ -138,6 +188,12 @@ struct ModelPreviewView: View {
             Text("Longest side of the model. The Bambu X1 Carbon build plate is 256 mm.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+
+            if isFullBody && targetLongestMM < Self.fullBodyPrintMM {
+                Label("Ankles, wrists and fingers may be too thin to print below \(Int(Self.fullBodyPrintMM)) mm — add supports in Bambu Studio or print larger.", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
 
             HStack {
                 Text("Flat base")
@@ -191,7 +247,7 @@ struct ModelPreviewView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(triangles.isEmpty || isExporting || isProcessingMesh)
+                .disabled(triangles.isEmpty || isExporting || isProcessingMesh || isIsolating)
             }
 
             if let exportedFile {
@@ -218,6 +274,81 @@ struct ModelPreviewView: View {
         }
         .padding()
         .background(.bar)
+    }
+
+    private static let cropOff: Double = 1.5
+
+    private var isolationSettings: PersonIsolator.Settings {
+        PersonIsolator.Settings(
+            floorClearance: Float(floorClearanceCM / 100),
+            cropHalfWidth: cropHalfWidth >= Self.cropOff ? nil : Float(cropHalfWidth))
+    }
+
+    /// Full Body cut-out: how far above the floor to cut, and an optional
+    /// square crop for anything touching the person.
+    @ViewBuilder
+    private var isolationControls: some View {
+        if personNotFound {
+            Label("Couldn't find a person to cut out — showing the whole scan", systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
+
+        HStack {
+            Text("Floor cut")
+            Slider(value: $floorClearanceCM, in: 0...10, step: 0.5) { editing in
+                if !editing { applyIsolation() }
+            }
+            Group {
+                if isIsolating {
+                    ProgressView()
+                } else {
+                    Text(String(format: "%.1f cm", floorClearanceCM))
+                }
+            }
+            .monospacedDigit()
+            .frame(width: 64, alignment: .trailing)
+        }
+
+        HStack {
+            Text("Crop")
+            Slider(value: $cropHalfWidth, in: 0.2...Self.cropOff, step: 0.05) { editing in
+                if !editing { applyIsolation() }
+            }
+            Text(cropHalfWidth >= Self.cropOff ? "Off" : "\(Int((cropHalfWidth * 200).rounded())) cm")
+                .monospacedDigit()
+                .frame(width: 64, alignment: .trailing)
+        }
+
+        Text("The person is cut out of the floor and surroundings automatically. Raise Floor cut if bits of floor stay on the feet; narrow Crop (width of a square around them) if something touching them is kept.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+    }
+
+    /// Re-runs the cut-out with the current settings, then re-applies the
+    /// flat base on top of it.
+    private func applyIsolation() {
+        guard isolatesPerson, !loadedTriangles.isEmpty else { return }
+        exportedFile = nil
+        isolationGeneration += 1
+        let generation = isolationGeneration
+        isIsolating = true
+        let loaded = loadedTriangles
+        let settings = isolationSettings
+        Task {
+            let (isolated, repaired) = await Task.detached(priority: .userInitiated) {
+                let isolated = PersonIsolator.isolate(loaded, settings: settings)
+                return (isolated, MeshRepair.repair(isolated.triangles))
+            }.value
+            // A slider moved again while this ran; a newer result is coming.
+            guard generation == isolationGeneration else { return }
+            isIsolating = false
+            personNotFound = !isolated.personFound
+            rawTriangles = isolated.triangles
+            uncutRepair = repaired
+            nativeSize = STLExporter.sizeMM(of: repaired.triangles)
+            applyFlatBaseCut()
+        }
     }
 
     private var displayedScene: SCNScene? {
@@ -310,20 +441,40 @@ struct ModelPreviewView: View {
     private func load() async {
         let url = modelURL
         scene = try? SCNScene(url: url, options: nil)
+        // The photo view shows the whole capture, floor and all; start on
+        // the print view, which shows the cut-out person.
+        if isolatesPerson { showPrintPreview = true }
+        let isolation = isolatesPerson ? isolationSettings : nil
+        if isolatesPerson { isIsolating = true }
         do {
-            let (loaded, repaired) = try await Task.detached(priority: .userInitiated) {
+            let (loaded, isolated, repaired) = try await Task.detached(priority: .userInitiated) {
                 let loaded = try STLExporter.loadTriangles(from: url)
-                return (loaded, MeshRepair.repair(loaded))
+                let isolated = isolation.map { PersonIsolator.isolate(loaded, settings: $0) }
+                return (loaded, isolated, MeshRepair.repair(isolated?.triangles ?? loaded))
             }.value
-            rawTriangles = loaded
+            isIsolating = false
+            loadedTriangles = loaded
+            personNotFound = isolated.map { !$0.personFound } ?? false
+            rawTriangles = isolated?.triangles ?? loaded
             uncutRepair = repaired
-            show(repaired)
 
             let size = STLExporter.sizeMM(of: repaired.triangles)
             nativeSize = size
             let longest = Double(max(size.x, max(size.y, size.z)))
-            if longest.isFinite, longest > 0 {
+            if isFullBody {
+                targetLongestMM = Self.fullBodyPrintMM
+            } else if longest.isFinite, longest > 0 {
                 targetLongestMM = min(max(longest.rounded(), 10), 256)
+            }
+            // Box-mode Full Body scans stand on rough, uneven feet; a slight
+            // flat base lets them stand. Area-mode scans already have one
+            // from the floor cut, and face-detail scans keep whatever base
+            // their body had.
+            if isFullBody && !isolatesPerson && !hasFaceDetail {
+                flatBaseFraction = 0.01
+                applyFlatBaseCut()
+            } else {
+                show(repaired)
             }
         } catch {
             errorMessage = "Couldn't read the model for export: \(error.localizedDescription)"

@@ -2,9 +2,10 @@ import Foundation
 import RealityKit
 import SwiftUI
 
-enum ScanMode: String, CaseIterable, Identifiable {
+enum ScanMode: String, CaseIterable, Identifiable, Codable {
     case object = "Object"
     case face = "Face / Bust"
+    case fullBody = "Full Body"
 
     var id: String { rawValue }
 
@@ -14,8 +15,87 @@ enum ScanMode: String, CaseIterable, Identifiable {
             return "Scan everyday objects for printing."
         case .face:
             return "Have your subject sit still and look forward. Orbit slowly around their head and shoulders."
+        case .fullBody:
+            return "You'll need a helper to hold the phone. Have your subject stand still with about 1 m of space all around them, arms slightly away from their body."
         }
     }
+
+    /// Extra preparation advice shown on the setup screen.
+    var setupTips: [String] {
+        switch self {
+        case .object, .face:
+            return []
+        case .fullBody:
+            var tips = [
+                "The subject holds still for the whole scan (2–4 minutes) while a helper walks around them.",
+                "Arms slightly away from the body, feet shoulder-width apart, nothing touching them.",
+                "Bright, even light — no window or lamp right behind them.",
+                "Fitted, matte clothing with some pattern or texture scans best; plain dark or shiny clothes can lose tracking. Tie back long hair.",
+            ]
+            if !usesAreaMode {
+                tips.append("On iOS 17 you'll need to stand 2–3 m back to fit them in the box. iOS 18 or later lets you scan from about 1 m.")
+            }
+            return tips
+        }
+    }
+
+    /// Full Body skips the bounding box and uses Object Capture's area mode
+    /// (iOS 18+): a box around a standing person only fits in frame from
+    /// 2–3 m away, which is too far indoors.
+    var usesAreaMode: Bool {
+        if #available(iOS 18.0, *) {
+            return self == .fullBody
+        }
+        return false
+    }
+
+    /// Shown before object detection (or area capture) starts.
+    var readyInstruction: String {
+        switch self {
+        case .object:
+            return "Point the camera at your object, then tap Continue."
+        case .face:
+            return "Have your subject sit still, then point the camera at their head and shoulders. Tap Continue."
+        case .fullBody where usesAreaMode:
+            return "Stand about 1 m from your subject. Tap Start Capture, then walk three slow loops around them: low (legs and feet), middle, then high (head and shoulders)."
+        case .fullBody:
+            return "Have your subject stand still, then point the camera at their whole body, head to feet. Tap Continue."
+        }
+    }
+
+    var detectingInstruction: String {
+        switch self {
+        case .object, .face:
+            return "Move closer or farther until the box hugs the object."
+        case .fullBody:
+            return "Step back until the box covers your subject from head to feet."
+        }
+    }
+
+    func orbitInstruction(photos: Int) -> String {
+        switch self {
+        case .object:
+            return "Orbit the object slowly — \(photos) photos so far."
+        case .face:
+            return "Orbit slowly around the head and shoulders — \(photos) photos so far."
+        case .fullBody where usesAreaMode:
+            return "Low loop, middle loop, then high loop, about 1 m away — \(photos) photos so far. Tap Finish after the third loop."
+        case .fullBody:
+            return "Walk slowly around your subject at chest height — \(photos) photos so far."
+        }
+    }
+
+    var orbitCompleteInstruction: String {
+        switch self {
+        case .object:
+            return "Orbit complete. Flip the object to capture its underside, keep scanning this side, or finish."
+        case .face, .fullBody:
+            return "Orbit complete. Keep scanning for more coverage, or finish."
+        }
+    }
+
+    /// People can't be turned upside down.
+    var allowsFlip: Bool { self == .object }
 }
 
 /// Drives one scan end-to-end: guided capture with ObjectCaptureSession,
@@ -67,6 +147,7 @@ final class ScanFlowModel: ObservableObject {
         do {
             let directory = try ScanStore.newScanDirectory()
             scanDirectory = directory
+            ScanStore.saveInfo(.init(mode: mode, usedAreaMode: mode.usesAreaMode), in: directory)
 
             let session = ObjectCaptureSession()
             var configuration = ObjectCaptureSession.Configuration()
