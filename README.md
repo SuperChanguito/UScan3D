@@ -22,11 +22,20 @@ Bambu Lab X1 Carbon (or any 3D printer).
 | Export | Binary STL or 3MF (Bambu's native format, written as a minimal OPC zip package), millimeters, Z-up, centered, resting on the plate, scaled to your chosen print size (defaults to real-world size) |
 | Send to Printer | Uploads the exported file straight to a Bambu X1 Carbon over LAN via its FTPS server (port 990, `bblp` / the printer's Access Code) — no computer needed for the *transfer*. See the requirements and caveats below. |
 
-**Storage:** a scan's captured photos (often hundreds of MB) are deleted once
-its 3D model has been built successfully — only the model and your exports
-are kept. If reconstruction fails, the photos are kept so you can tap
-**Try Again**; scans that never produced a model are cleaned up the next time
-the app launches.
+**Storage:** a scan's captured photos (often hundreds of MB) are kept until
+you approve the model. After a build, the preview shows **Looks good — free up
+space** (deletes the photos) and **Rebuild**. Photos you never approve are
+deleted automatically when the app launches more than 7 days after the scan.
+If reconstruction fails, the photos are kept so you can tap **Try Again**;
+scans that never produced a model are cleaned up the next time the app
+launches.
+
+**Ghosted flip scans:** a flipped pass sometimes comes out as two overlapping
+copies because Apple's reconstruction misaligns it with the first pass. The
+app records where each pass starts (`passes.json` in the scan folder), so
+**Rebuild → Rebuild without flipped side** reconstructs from only the photos
+taken before the first flip. It writes a new `model.usdz`; if the rebuild fails
+or is cancelled, the previous model is kept.
 
 Exported STLs open directly in Bambu Studio. AirDrop or share them to your
 computer, open in the Bambu Handy app, or send them to the printer directly
@@ -94,6 +103,9 @@ The Xcode project itself is generated from [`project.yml`](project.yml) by
   featureless objects confuse photogrammetry.
 - Even, diffuse lighting; avoid harsh shadows.
 - Orbit slowly at a steady distance. More angles = better mesh.
+- Flipping works best on objects with detail on every side. Lay the object on
+  its side rather than upside down, keep it in the same spot, and don't change
+  the lighting. For flat-bottomed objects, skip the flip and use **Flat base**.
 - For busts of people: have them sit still (~1–2 min) and orbit their head
   and shoulders.
 

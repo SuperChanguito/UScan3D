@@ -8,9 +8,33 @@ struct SavedScan: Identifiable {
 }
 
 /// Each scan lives in Documents/Scans/<UUID>/ with the captured photos,
-/// reconstruction checkpoints, the finished model.usdz, and any exported STLs.
-/// Photos and checkpoints are deleted once the model has been built.
+/// reconstruction checkpoints, the pass boundaries (passes.json), the
+/// finished model.usdz, and any exported STLs. Photos and checkpoints are
+/// kept until the user approves the model, or for at most a week.
 enum ScanStore {
+
+    /// Where each extra capture pass began, so a rebuild can leave out the
+    /// photos taken after the object was flipped.
+    struct PassBoundaries: Codable {
+        struct Boundary: Codable {
+            /// session.numberOfShotsTaken when the pass began: photos
+            /// 0..<shotCount came from earlier passes.
+            let shotCount: Int
+            let flipped: Bool
+        }
+
+        var boundaries: [Boundary] = []
+
+        /// Number of photos taken before the first flip, if there was one.
+        var shotsBeforeFirstFlip: Int? {
+            boundaries.first(where: \.flipped)?.shotCount
+        }
+    }
+
+    /// How long capture photos are kept for a scan the user never approved.
+    static let captureDataLifetime: TimeInterval = 7 * 24 * 60 * 60
+
+    private static let imageExtensions: Set<String> = ["heic", "heif", "jpg", "jpeg", "png"]
 
     static var scansRoot: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -27,6 +51,21 @@ enum ScanStore {
 
     static func modelURL(in scanDirectory: URL) -> URL {
         scanDirectory.appendingPathComponent("model.usdz")
+    }
+
+    /// Reconstruction writes here first, so a failed or cancelled rebuild
+    /// never destroys the existing model.usdz.
+    static func pendingModelURL(in scanDirectory: URL) -> URL {
+        scanDirectory.appendingPathComponent("model-building.usdz")
+    }
+
+    static func passesURL(in scanDirectory: URL) -> URL {
+        scanDirectory.appendingPathComponent("passes.json")
+    }
+
+    /// Temporary input folder for a rebuild without the flipped side.
+    static func firstPassImagesDirectory(in scanDirectory: URL) -> URL {
+        scanDirectory.appendingPathComponent("FirstPassImages", isDirectory: true)
     }
 
     static func newScanDirectory() throws -> URL {
@@ -64,12 +103,71 @@ enum ScanStore {
         try? FileManager.default.removeItem(at: scan.directory)
     }
 
-    /// Deletes the captured photos and reconstruction checkpoints (often
-    /// hundreds of MB). Only call once model.usdz has been verified — until
-    /// then they're needed to retry reconstruction.
+    static func savePassBoundaries(_ passes: PassBoundaries, in scanDirectory: URL) {
+        guard let data = try? JSONEncoder().encode(passes) else { return }
+        try? data.write(to: passesURL(in: scanDirectory), options: .atomic)
+    }
+
+    /// Moves a freshly reconstructed model into place as model.usdz,
+    /// replacing any earlier build.
+    static func installPendingModel(in scanDirectory: URL) throws {
+        let fileManager = FileManager.default
+        let model = modelURL(in: scanDirectory)
+        let pending = pendingModelURL(in: scanDirectory)
+        if fileManager.fileExists(atPath: model.path) {
+            _ = try fileManager.replaceItemAt(model, withItemAt: pending)
+        } else {
+            try fileManager.moveItem(at: pending, to: model)
+        }
+    }
+
+    /// Fills FirstPassImages with the first `count` captured photos (hard
+    /// links, so no extra storage). ObjectCaptureSession numbers its photos
+    /// sequentially, so name order is capture order.
+    static func prepareFirstPassImages(in scanDirectory: URL, count: Int) throws -> URL {
+        let fileManager = FileManager.default
+        let destination = firstPassImagesDirectory(in: scanDirectory)
+        try? fileManager.removeItem(at: destination)
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+
+        let images = try fileManager.contentsOfDirectory(
+            at: imagesDirectory(in: scanDirectory),
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])
+            .filter { imageExtensions.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+
+        for image in images.prefix(count) {
+            let target = destination.appendingPathComponent(image.lastPathComponent)
+            do {
+                try fileManager.linkItem(at: image, to: target)
+            } catch {
+                try fileManager.copyItem(at: image, to: target)
+            }
+        }
+        return destination
+    }
+
+    /// Deletes the captured photos, reconstruction checkpoints (often
+    /// hundreds of MB) and the pass boundaries that describe them. Only call
+    /// once the user has approved model.usdz (or it has aged out) — until
+    /// then they're needed to retry or rebuild.
     static func removeCaptureData(in scanDirectory: URL) {
-        try? FileManager.default.removeItem(at: imagesDirectory(in: scanDirectory))
-        try? FileManager.default.removeItem(at: snapshotsDirectory(in: scanDirectory))
+        let fileManager = FileManager.default
+        try? fileManager.removeItem(at: imagesDirectory(in: scanDirectory))
+        try? fileManager.removeItem(at: snapshotsDirectory(in: scanDirectory))
+        try? fileManager.removeItem(at: firstPassImagesDirectory(in: scanDirectory))
+        try? fileManager.removeItem(at: passesURL(in: scanDirectory))
+    }
+
+    /// Deletes capture data for built scans older than captureDataLifetime
+    /// that the user never approved. Safe to run in the background: it only
+    /// touches scans that already have a model.
+    static func removeExpiredCaptureData() {
+        let cutoff = Date().addingTimeInterval(-captureDataLifetime)
+        for scan in savedScans() where scan.createdAt < cutoff {
+            removeCaptureData(in: scan.directory)
+        }
     }
 
     /// Deletes scan folders that never produced a model (the app was killed

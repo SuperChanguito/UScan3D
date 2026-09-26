@@ -6,6 +6,8 @@ import SwiftUI
 struct CaptureView: View {
     let session: ObjectCaptureSession
     let mode: ScanMode
+    /// Called just before a new pass begins; `true` if the object was flipped.
+    let onNewPass: (_ flipped: Bool) -> Void
     let onCancel: () -> Void
 
     var body: some View {
@@ -57,10 +59,21 @@ struct CaptureView: View {
                         ? "Orbit complete. Keep scanning for more coverage, or finish."
                         : "Orbit complete. Flip the object to capture its underside, keep scanning this side, or finish.")
                     if mode == .object && !session.feedback.contains(.objectNotFlippable) {
-                        actionButton("Flip Object & Continue") { session.beginNewScanPassAfterFlip() }
+                        Text("Flipping works best on objects with detail on every side. Try laying it on its side instead of upside down, keep it in the same spot, and don't change the lighting. Flat-bottomed objects: skip the flip and use Flat base instead.")
+                            .font(.caption)
+                            .multilineTextAlignment(.center)
+                            .padding(10)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        actionButton("Flip Object & Continue") {
+                            onNewPass(true)
+                            session.beginNewScanPassAfterFlip()
+                        }
                     }
                     HStack(spacing: 12) {
-                        Button("Scan More") { session.beginNewScanPass() }
+                        Button("Scan More") {
+                            onNewPass(false)
+                            session.beginNewScanPass()
+                        }
                             .buttonStyle(.bordered)
                         actionButton("Finish Scan") { session.finish() }
                     }

@@ -33,14 +33,34 @@ final class ScanFlowModel: ObservableObject {
         case failed(message: String, canRetry: Bool = false)
     }
 
+    /// Which photos a reconstruction uses.
+    private enum ReconstructionInput {
+        case allPhotos
+        /// Only the photos taken before the first flip — recovers a scan
+        /// ghosted by a misaligned flipped pass.
+        case beforeFirstFlip
+    }
+
     @Published var phase: Phase = .setup
     @Published private(set) var session: ObjectCaptureSession?
+    /// True once a model has been built and its photos are still on disk,
+    /// i.e. the user can still rebuild or approve it.
+    @Published private(set) var hasKeptPhotos = false
     private(set) var mode: ScanMode = .object
+    /// True once model.usdz exists for this scan, so a failed rebuild can
+    /// fall back to it.
+    private(set) var hasBuiltModel = false
 
     private var scanDirectory: URL?
     private var photoSession: PhotogrammetrySession?
     private var reconstructionTask: Task<Void, Never>?
+    private var reconstructionInput: ReconstructionInput = .allPhotos
+    private var passBoundaries = ScanStore.PassBoundaries()
     private var isObservingSession = false
+
+    var canRebuildWithoutFlippedSide: Bool {
+        (passBoundaries.shotsBeforeFirstFlip ?? 0) > 0
+    }
 
     func startCapture(mode: ScanMode) {
         self.mode = mode
@@ -59,6 +79,14 @@ final class ScanFlowModel: ObservableObject {
         } catch {
             phase = .failed(message: "Could not start the scan: \(error.localizedDescription)")
         }
+    }
+
+    /// Call just before beginNewScanPass()/beginNewScanPassAfterFlip() so
+    /// the photos can later be split by pass.
+    func recordPassBoundary(flipped: Bool) {
+        guard let scanDirectory, let session else { return }
+        passBoundaries.boundaries.append(.init(shotCount: session.numberOfShotsTaken, flipped: flipped))
+        ScanStore.savePassBoundaries(passBoundaries, in: scanDirectory)
     }
 
     func observeSession() async {
@@ -115,10 +143,39 @@ final class ScanFlowModel: ObservableObject {
         }
     }
 
-    /// Re-runs reconstruction from the photos already on disk. Uses the same
-    /// detached reconstructionTask pattern as the first attempt so it isn't
-    /// tied to (or cancelled with) any view's .task.
+    /// Re-runs the last reconstruction (same photos) from what's on disk.
     func retryReconstruction() {
+        startReconstruction()
+    }
+
+    /// Rebuilds a finished model from its kept photos, replacing model.usdz
+    /// only if the new build succeeds.
+    func rebuild(withoutFlippedSide: Bool) {
+        guard hasKeptPhotos else { return }
+        reconstructionInput = withoutFlippedSide && canRebuildWithoutFlippedSide
+            ? .beforeFirstFlip : .allPhotos
+        startReconstruction()
+    }
+
+    /// After a failed or cancelled rebuild, go back to the model that was
+    /// already built.
+    func keepPreviousModel() {
+        guard let scanDirectory, hasBuiltModel else { return }
+        phase = .finished(modelURL: ScanStore.modelURL(in: scanDirectory))
+    }
+
+    /// The user approved the model: delete its photos and checkpoints.
+    func freeUpSpace() {
+        guard let scanDirectory, photoSession == nil else { return }
+        hasKeptPhotos = false
+        Task.detached(priority: .utility) {
+            ScanStore.removeCaptureData(in: scanDirectory)
+        }
+    }
+
+    /// Uses the same detached reconstructionTask pattern as the first
+    /// attempt so it isn't tied to (or cancelled with) any view's .task.
+    private func startReconstruction() {
         guard scanDirectory != nil, photoSession == nil else { return }
         reconstructionTask?.cancel()
         phase = .reconstructing(progress: 0)
@@ -144,21 +201,33 @@ final class ScanFlowModel: ObservableObject {
         guard let scanDirectory, !Task.isCancelled else { return }
 
         let modelURL = ScanStore.modelURL(in: scanDirectory)
-        // A partial file from an earlier failed attempt must not pass the
-        // "model exists" check below.
-        try? FileManager.default.removeItem(at: modelURL)
+        // Build into a separate file so a failed rebuild keeps the existing
+        // model. A partial file from an earlier failed attempt must not pass
+        // the "output exists" check below.
+        let outputURL = ScanStore.pendingModelURL(in: scanDirectory)
+        try? FileManager.default.removeItem(at: outputURL)
+        defer {
+            try? FileManager.default.removeItem(at: outputURL)
+            try? FileManager.default.removeItem(at: ScanStore.firstPassImagesDirectory(in: scanDirectory))
+        }
         do {
             var configuration = PhotogrammetrySession.Configuration()
-            // Reusing the capture checkpoints makes reconstruction much faster.
-            configuration.checkpointDirectory = ScanStore.snapshotsDirectory(in: scanDirectory)
-            let photoSession = try PhotogrammetrySession(
-                input: ScanStore.imagesDirectory(in: scanDirectory),
-                configuration: configuration)
+            let input: URL
+            if reconstructionInput == .beforeFirstFlip, let count = passBoundaries.shotsBeforeFirstFlip {
+                input = try ScanStore.prepareFirstPassImages(in: scanDirectory, count: count)
+                // The capture checkpoints were made from every pass, flipped
+                // one included, so they can't be reused here.
+            } else {
+                input = ScanStore.imagesDirectory(in: scanDirectory)
+                // Reusing the capture checkpoints makes reconstruction much faster.
+                configuration.checkpointDirectory = ScanStore.snapshotsDirectory(in: scanDirectory)
+            }
+            let photoSession = try PhotogrammetrySession(input: input, configuration: configuration)
             self.photoSession = photoSession
 
             // Only .reduced (and .preview) are available for on-device
             // reconstruction on iOS; .medium/.full/.raw are macOS-only.
-            try photoSession.process(requests: [.modelFile(url: modelURL, detail: .reduced)])
+            try photoSession.process(requests: [.modelFile(url: outputURL, detail: .reduced)])
 
             // PhotogrammetrySession still sends .processingComplete after a
             // .requestError, so remember the error rather than letting the
@@ -173,10 +242,16 @@ final class ScanFlowModel: ObservableObject {
                 case .processingComplete:
                     if let requestErrorMessage {
                         failReconstruction("Reconstruction failed: \(requestErrorMessage)")
-                    } else if FileManager.default.fileExists(atPath: modelURL.path) {
-                        phase = .finished(modelURL: modelURL)
-                        Task.detached(priority: .utility) {
-                            ScanStore.removeCaptureData(in: scanDirectory)
+                    } else if FileManager.default.fileExists(atPath: outputURL.path) {
+                        do {
+                            try ScanStore.installPendingModel(in: scanDirectory)
+                            hasBuiltModel = true
+                            // Photos stay until the user approves the model
+                            // (or they age out at launch after a week).
+                            hasKeptPhotos = true
+                            phase = .finished(modelURL: modelURL)
+                        } catch {
+                            failReconstruction("Couldn't save the model: \(error.localizedDescription)")
                         }
                     } else {
                         failReconstruction("Reconstruction finished but didn't produce a model file.")

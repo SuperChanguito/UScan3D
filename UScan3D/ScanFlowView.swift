@@ -7,6 +7,7 @@ struct ScanFlowView: View {
     @StateObject private var flow = ScanFlowModel()
     @Environment(\.dismiss) private var dismiss
     @State private var selectedMode: ScanMode = .object
+    @State private var showingRebuildOptions = false
 
     var body: some View {
         NavigationStack {
@@ -40,7 +41,9 @@ struct ScanFlowView: View {
 
         case .capturing:
             if let session = flow.session {
-                CaptureView(session: session, mode: flow.mode) {
+                CaptureView(session: session, mode: flow.mode) { flipped in
+                    flow.recordPassBoundary(flipped: flipped)
+                } onCancel: {
                     flow.cancelAndCleanUp()
                     dismiss()
                 }
@@ -71,6 +74,11 @@ struct ScanFlowView: View {
             ModelPreviewView(modelURL: modelURL) {
                 dismiss()
             }
+            .safeAreaInset(edge: .top) {
+                if flow.hasKeptPhotos {
+                    reviewBar
+                }
+            }
 
         case .failed(let message, let canRetry):
             VStack(spacing: 16) {
@@ -85,6 +93,11 @@ struct ScanFlowView: View {
                         flow.retryReconstruction()
                     }
                     .buttonStyle(.borderedProminent)
+                    if flow.hasBuiltModel {
+                        Button("Keep Previous Model") {
+                            flow.keepPreviousModel()
+                        }
+                    }
                     Button("Discard Scan", role: .destructive) {
                         flow.cancelAndCleanUp()
                         dismiss()
@@ -97,6 +110,37 @@ struct ScanFlowView: View {
                     .buttonStyle(.borderedProminent)
                 }
             }
+        }
+    }
+
+    /// Shown over a freshly built model while its photos are still kept, so
+    /// a ghosted scan (usually a misaligned flip) can be rebuilt.
+    private var reviewBar: some View {
+        VStack(spacing: 8) {
+            Text("Check the model from every side. If it looks doubled or ghosted, rebuild it before freeing up space.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 12) {
+                Button("Rebuild") { showingRebuildOptions = true }
+                    .buttonStyle(.bordered)
+                Button("Looks good — free up space") { flow.freeUpSpace() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+        .confirmationDialog("Rebuild the model?", isPresented: $showingRebuildOptions, titleVisibility: .visible) {
+            if flow.canRebuildWithoutFlippedSide {
+                Button("Rebuild without flipped side") { flow.rebuild(withoutFlippedSide: true) }
+            }
+            Button("Rebuild with all photos") { flow.rebuild(withoutFlippedSide: false) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(flow.canRebuildWithoutFlippedSide
+                ? "Ghosting after a flip means the two sides didn't line up. Rebuilding without the flipped side uses only the photos from before the flip; the open bottom is filled in flat on export. Your current model is kept if the rebuild fails."
+                : "Builds the model again from the same photos. Your current model is kept if the rebuild fails.")
         }
     }
 
