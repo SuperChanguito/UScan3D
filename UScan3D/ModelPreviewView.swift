@@ -22,6 +22,8 @@ struct ModelPreviewView: View {
     /// surroundings before anything else.
     private var isolatesPerson: Bool { scanInfo?.usedAreaMode ?? false }
     private var isFullBody: Bool { scanInfo?.mode == .fullBody }
+    /// A Full Body scan whose head was already replaced from a bust scan.
+    private var hasFaceDetail: Bool { scanInfo?.faceDetailFrom != nil }
     /// Figurine size: a person at real size would max out the 256 mm plate.
     private static let fullBodyPrintMM: Double = 150
 
@@ -40,6 +42,8 @@ struct ModelPreviewView: View {
     @State private var isIsolating = false
     @State private var isolationGeneration = 0
     @State private var personNotFound = false
+    @State private var showingFaceDetail = false
+    @State private var faceDetailSaved = false
     @State private var uncutRepair: MeshRepair.Result?
     @State private var nativeSize: SIMD3<Float>?
     /// Real-world size (mm) of `triangles` — after a flat-base cut the
@@ -78,6 +82,13 @@ struct ModelPreviewView: View {
                     }
                 }
             exportPanel
+                // On the panel, not the whole view: that already has the
+                // export alert, and one view can't reliably host two.
+                .alert("Saved as a New Scan", isPresented: $faceDetailSaved) {
+                    Button("OK") {}
+                } message: {
+                    Text("Find it in your scans list as \"Full Body + face detail\". This scan is unchanged.")
+                }
         }
         .navigationTitle("Your Scan")
         .navigationBarTitleDisplayMode(.inline)
@@ -105,6 +116,13 @@ struct ModelPreviewView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingFaceDetail) {
+            // The cut-out body, before any flat base: the new scan gets its
+            // own flat-base setting.
+            FaceDetailView(bodyTriangles: rawTriangles) {
+                faceDetailSaved = true
+            }
+        }
         .alert(
             "Export Problem",
             isPresented: Binding(
@@ -129,6 +147,17 @@ struct ModelPreviewView: View {
 
             if isolatesPerson {
                 isolationControls
+            }
+
+            if isFullBody && !hasFaceDetail {
+                Button {
+                    showingFaceDetail = true
+                } label: {
+                    Label("Add face detail from a Face / Bust scan", systemImage: "face.smiling")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(rawTriangles.isEmpty || isIsolating)
             }
 
             if holesFilled > 0 {
@@ -439,8 +468,9 @@ struct ModelPreviewView: View {
             }
             // Box-mode Full Body scans stand on rough, uneven feet; a slight
             // flat base lets them stand. Area-mode scans already have one
-            // from the floor cut.
-            if isFullBody && !isolatesPerson {
+            // from the floor cut, and face-detail scans keep whatever base
+            // their body had.
+            if isFullBody && !isolatesPerson && !hasFaceDetail {
                 flatBaseFraction = 0.01
                 applyFlatBaseCut()
             } else {

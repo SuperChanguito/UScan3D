@@ -15,11 +15,17 @@ enum PrintPreview {
     /// The expensive part; safe to run off the main thread.
     static func buffers(for triangles: [Triangle], longestSideMM: Float) -> Buffers? {
         guard let placed = try? STLExporter.place(triangles, longestSideMM: longestSideMM) else { return nil }
+        return flatShaded(placed)
+    }
+
+    /// The triangles as they are (no placing or scaling), e.g. to pick
+    /// points in the scan's own coordinates.
+    static func flatShaded(_ triangles: [Triangle]) -> Buffers {
         var positions: [SIMD3<Float>] = []
         var normals: [SIMD3<Float>] = []
-        positions.reserveCapacity(placed.count * 3)
-        normals.reserveCapacity(placed.count * 3)
-        for triangle in placed {
+        positions.reserveCapacity(triangles.count * 3)
+        normals.reserveCapacity(triangles.count * 3)
+        for triangle in triangles {
             let cross = simd_cross(triangle.b - triangle.a, triangle.c - triangle.a)
             let length = simd_length(cross)
             let normal = length > 0 ? cross / length : SIMD3<Float>(0, 0, 1)
@@ -30,6 +36,14 @@ enum PrintPreview {
     }
 
     static func scene(from buffers: Buffers) -> SCNScene {
+        let scene = SCNScene()
+        scene.rootNode.addChildNode(node(from: buffers))
+        return scene
+    }
+
+    /// The mesh as a node, turned so the Z-up mesh stands up in SceneKit.
+    /// Points in the node's local coordinates are mesh coordinates.
+    static func node(from buffers: Buffers, color: UIColor = .systemGray2) -> SCNNode {
         let vertices = buffers.positions.map { SCNVector3($0.x, $0.y, $0.z) }
         let normals = buffers.normals.map { SCNVector3($0.x, $0.y, $0.z) }
         let indices = Array(0..<Int32(vertices.count))
@@ -40,15 +54,12 @@ enum PrintPreview {
         // Single-sided on purpose: a face that's wound the wrong way shows
         // up as a hole here, just as it would confuse the slicer.
         let material = SCNMaterial()
-        material.diffuse.contents = UIColor.systemGray2
+        material.diffuse.contents = color
         geometry.materials = [material]
 
         // The export is Z-up; SceneKit is Y-up.
         let model = SCNNode(geometry: geometry)
         model.eulerAngles.x = -Float.pi / 2
-
-        let scene = SCNScene()
-        scene.rootNode.addChildNode(model)
-        return scene
+        return model
     }
 }

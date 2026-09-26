@@ -23,6 +23,10 @@ enum ScanStore {
         /// Captured without a bounding box, so the model includes the floor
         /// and surroundings.
         var usedAreaMode: Bool
+        /// Set on a Full Body scan whose head was replaced from this
+        /// Face / Bust scan (its folder name). Such scans are already cut
+        /// out and sealed, and are stored as model.obj.
+        var faceDetailFrom: String? = nil
     }
 
     /// Where each extra capture pass began, so a rebuild can leave out the
@@ -63,6 +67,41 @@ enum ScanStore {
 
     static func modelURL(in scanDirectory: URL) -> URL {
         scanDirectory.appendingPathComponent("model.usdz")
+    }
+
+    /// Models the app builds itself (face detail) rather than reconstructs.
+    static func objModelURL(in scanDirectory: URL) -> URL {
+        scanDirectory.appendingPathComponent("model.obj")
+    }
+
+    /// The scan's model, whichever kind it has, or nil if it has none yet.
+    static func existingModelURL(in scanDirectory: URL) -> URL? {
+        [modelURL(in: scanDirectory), objModelURL(in: scanDirectory)]
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// Saves a mesh (Z-up, meters) as a new scan with its own folder.
+    /// Written as OBJ, Y-up like the USDZ models, so the rest of the app
+    /// loads it the same way.
+    static func saveBuiltScan(_ triangles: [Triangle], info: ScanInfo) throws {
+        let directory = scansRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let mesh = MeshRepair.weld(triangles)
+        var obj = "# U-Scan3D\n"
+        obj.reserveCapacity(mesh.vertices.count * 40 + mesh.triangles.count * 30)
+        for v in mesh.vertices {
+            obj += "v \(v.x) \(v.z) \(-v.y)\n" // Z-up -> Y-up
+        }
+        for (a, b, c) in mesh.triangles {
+            obj += "f \(a + 1) \(b + 1) \(c + 1)\n"
+        }
+        do {
+            saveInfo(info, in: directory)
+            try Data(obj.utf8).write(to: objModelURL(in: directory), options: .atomic)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 
     /// Reconstruction writes here first, so a failed or cancelled rebuild
@@ -113,8 +152,7 @@ enum ScanStore {
         }
 
         return entries.compactMap { directory -> SavedScan? in
-            let model = Self.modelURL(in: directory)
-            guard fileManager.fileExists(atPath: model.path) else { return nil }
+            guard let model = existingModelURL(in: directory) else { return nil }
             let created = (try? directory.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
             return SavedScan(
                 id: directory.lastPathComponent,
@@ -208,7 +246,7 @@ enum ScanStore {
             options: [.skipsHiddenFiles]) else {
             return
         }
-        for directory in entries where !fileManager.fileExists(atPath: modelURL(in: directory).path) {
+        for directory in entries where existingModelURL(in: directory) == nil {
             try? fileManager.removeItem(at: directory)
         }
     }

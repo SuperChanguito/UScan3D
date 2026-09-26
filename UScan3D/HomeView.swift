@@ -24,7 +24,9 @@ struct HomeView: View {
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(scan.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                    Text(scan.info.map { "\($0.mode.rawValue) · Preview & export" } ?? "Preview & export")
+                                    Text(scan.info.map {
+                                        "\($0.faceDetailFrom != nil ? "Full Body + face detail" : $0.mode.rawValue) · Preview & export"
+                                    } ?? "Preview & export")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
